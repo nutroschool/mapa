@@ -31,7 +31,6 @@ import {
   Save,
   Search,
   Settings2,
-  Share2,
   Sparkles,
   Target,
   TrendingUp,
@@ -40,7 +39,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type View = "hoje" | "calendario" | "roteiros" | "desempenho";
 type Status = "Ideia" | "Roteiro" | "Gravação" | "Edição" | "Agendado" | "Publicado";
@@ -59,92 +58,13 @@ type ContentItem = {
   notes: string;
 };
 
-const initialContents: ContentItem[] = [
-  {
-    id: 1,
-    title: "Creatina faz mal para os rins?",
-    format: "Reel",
-    pillar: "Mitos",
-    status: "Gravação",
-    date: "2026-08-04",
-    duration: "60–90s",
-    hook: "Se você ainda tem medo da creatina por causa dos rins, precisa ver isso.",
-    script:
-      "A creatinina pode subir um pouco sem que isso signifique lesão renal. O nome parece igual, mas creatina e creatinina não são a mesma coisa.\n\nO ponto é: em pessoas saudáveis e nas doses recomendadas, as evidências não mostram que a creatina cause dano renal. A avaliação muda quando já existe doença renal ou outra condição clínica — e aí a conversa precisa ser individualizada.",
-    cta: "Envie este vídeo para quem ainda repete esse mito.",
-    notes: "Mostrar pote de creatina no primeiro segundo. Inserir referência na legenda.",
-  },
-  {
-    id: 2,
-    title: "GLP-1 e perda de massa muscular",
-    format: "Carrossel",
-    pillar: "Atualização médica",
-    status: "Roteiro",
-    date: "2026-08-06",
-    duration: "8 páginas",
-    hook: "O peso caiu. Mas o que aconteceu com a composição corporal?",
-    script:
-      "Estrutura do carrossel:\n1. A pergunta que a balança não responde\n2. O que compõe a perda de peso\n3. Por que proteína e exercício importam\n4. O que acompanhar na prática\n5. Conduta deve ser individualizada",
-    cta: "Salve para revisar antes da próxima consulta.",
-    notes: "Usar gráfico simples de composição da perda de peso.",
-  },
-  {
-    id: 3,
-    title: "3 erros no café da manhã",
-    format: "Reel",
-    pillar: "Nutrição prática",
-    status: "Edição",
-    date: "2026-08-05",
-    duration: "45s",
-    hook: "Seu café da manhã parece saudável — mas pode estar sabotando sua saciedade.",
-    script: "Abrir com três pratos na bancada. Comparar proteína, fibra e densidade energética.",
-    cta: "Comente qual desses erros mais aparece na sua rotina.",
-    notes: "Captar planos de apoio dos alimentos.",
-  },
-  {
-    id: 4,
-    title: "Semaglutida oral: o que mudou",
-    format: "YouTube",
-    pillar: "Evidência",
-    status: "Ideia",
-    date: "2026-08-12",
-    duration: "8–10 min",
-    hook: "A via mudou. O raciocínio clínico também precisa mudar?",
-    script: "",
-    cta: "",
-    notes: "Cruzar SOUL, desfechos e aplicabilidade clínica.",
-  },
-  {
-    id: 5,
-    title: "Bastidores da gravação NutroSchool",
-    format: "Stories",
-    pillar: "Bastidores",
-    status: "Agendado",
-    date: "2026-08-07",
-    duration: "5 stories",
-    hook: "O que acontece antes da câmera ligar?",
-    script: "Entrada do estúdio → pauta → teleprompter → gravação → revisão.",
-    cta: "Responda: qual tema você quer na próxima aula?",
-    notes: "Publicar entre 11h e 12h.",
-  },
-  {
-    id: 6,
-    title: "Proteína depois dos 60",
-    format: "Reel",
-    pillar: "Longevidade",
-    status: "Publicado",
-    date: "2026-08-01",
-    duration: "72s",
-    hook: "Depois dos 60, comer a mesma quantidade de proteína pode não produzir a mesma resposta.",
-    script: "Explicar resistência anabólica com linguagem acessível.",
-    cta: "Salve para conversar com seu profissional de saúde.",
-    notes: "Publicado às 19h30.",
-  },
-];
+const initialContents: ContentItem[] = [];
 
 const statusOrder: Status[] = ["Ideia", "Roteiro", "Gravação", "Edição", "Agendado", "Publicado"];
 const weekDays = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
-const storageKey = "mapa-content-items-v1";
+const storageKey = "mapa-content-items-v2";
+const instagramDemoKey = "mapa-instagram-demo-v2";
+const todayIso = "2026-08-04";
 
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "hoje", label: "Hoje", icon: LayoutDashboard },
@@ -174,28 +94,34 @@ export default function Home() {
   const [addOpen, setAddOpen] = useState(false);
   const [instagramOpen, setInstagramOpen] = useState(false);
   const [instagramDemo, setInstagramDemo] = useState(false);
-  const [selectedId, setSelectedId] = useState(1);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [utilityModal, setUtilityModal] = useState<"help" | "notifications" | "profile" | null>(null);
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [newItem, setNewItem] = useState({
     title: "",
     format: "Reel" as ContentItem["format"],
     pillar: "Educação",
-    date: "2026-08-08",
+    date: todayIso,
     status: "Ideia" as Status,
   });
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        setContents(JSON.parse(saved));
-      } catch {
-        setContents(initialContents);
+    const frame = window.requestAnimationFrame(() => {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setContents(Array.isArray(parsed) ? parsed : initialContents);
+        } catch {
+          setContents(initialContents);
+        }
       }
-    }
-    setInstagramDemo(window.localStorage.getItem("mapa-instagram-demo") === "true");
-    setReady(true);
+      setInstagramDemo(window.localStorage.getItem(instagramDemoKey) === "true");
+      setReady(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -207,6 +133,17 @@ export default function Home() {
     const timeout = window.setTimeout(() => setToast(""), 3200);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    function focusSearch(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
 
   const selected = contents.find((item) => item.id === selectedId) ?? contents[0];
   const filteredContents = useMemo(
@@ -220,6 +157,7 @@ export default function Home() {
   const published = contents.filter((item) => item.status === "Publicado").length;
   const scheduled = contents.filter((item) => item.status === "Agendado").length;
   const inProgress = contents.filter((item) => ["Roteiro", "Gravação", "Edição"].includes(item.status)).length;
+  const weeklyGoal = Math.min(published, 5);
 
   function announce(message: string) {
     setToast(message);
@@ -249,7 +187,7 @@ export default function Home() {
     setContents((items) => [...items, item]);
     setSelectedId(item.id);
     setAddOpen(false);
-    setNewItem({ title: "", format: "Reel", pillar: "Educação", date: "2026-08-08", status: "Ideia" });
+    setNewItem({ title: "", format: "Reel", pillar: "Educação", date: todayIso, status: "Ideia" });
     announce("Novo conteúdo adicionado ao MAPA.");
   }
 
@@ -259,17 +197,55 @@ export default function Home() {
   }
 
   function enableInstagramDemo() {
-    window.localStorage.setItem("mapa-instagram-demo", "true");
+    window.localStorage.setItem(instagramDemoKey, "true");
     setInstagramDemo(true);
     setInstagramOpen(false);
     announce("Modo demonstração ativado no painel.");
   }
 
+  function disableInstagramDemo() {
+    window.localStorage.removeItem(instagramDemoKey);
+    setInstagramDemo(false);
+    announce("Demonstração encerrada. O painel voltou a zero.");
+  }
+
+  function resetWorkspace() {
+    if (!window.confirm("Apagar todos os conteúdos salvos neste navegador?")) return;
+    setContents([]);
+    setSelectedId(null);
+    setSearch("");
+    window.localStorage.removeItem(storageKey);
+    setUtilityModal(null);
+    announce("Espaço zerado com sucesso.");
+  }
+
+  function createFromInsight() {
+    const item: ContentItem = {
+      id: Date.now(),
+      title: "O que a balança não está mostrando?",
+      format: "Reel",
+      pillar: "Educação",
+      status: "Roteiro",
+      date: todayIso,
+      duration: "60s",
+      hook: "O que a balança não está mostrando sobre o seu progresso?",
+      script: "",
+      cta: "",
+      notes: "Ideia criada a partir de um insight do painel de demonstração.",
+    };
+    setContents((items) => [...items, item]);
+    setSelectedId(item.id);
+    setView("roteiros");
+    announce("Roteiro criado a partir do insight.");
+  }
+
   const titles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
     hoje: {
       eyebrow: "TERÇA-FEIRA, 4 DE AGOSTO",
-      title: "Bom dia, José.",
-      subtitle: "Seu ritmo está bom. Vamos transformar as próximas ideias em publicações?",
+      title: contents.length ? "Bom dia, José." : "Seu MAPA começa aqui.",
+      subtitle: contents.length
+        ? "Vamos transformar as próximas ideias em publicações?"
+        : "O espaço está zerado. Adicione sua primeira ideia para começar.",
     },
     calendario: {
       eyebrow: "PLANEJAMENTO EDITORIAL",
@@ -320,12 +296,12 @@ export default function Home() {
 
         <div className="sidebar-spacer" />
         <div className="weekly-goal">
-          <div className="goal-head"><span><Target size={16} /> Meta da semana</span><strong>3/5</strong></div>
-          <div className="progress-track"><span style={{ width: "60%" }} /></div>
-          <small>2 conteúdos para fechar a meta</small>
+          <div className="goal-head"><span><Target size={16} /> Meta da semana</span><strong>{weeklyGoal}/5</strong></div>
+          <div className="progress-track"><span style={{ width: `${weeklyGoal * 20}%` }} /></div>
+          <small>{weeklyGoal ? `${5 - weeklyGoal} conteúdos para fechar a meta` : "Publique o primeiro conteúdo"}</small>
         </div>
-        <button className="nav-item quiet"><CircleHelp size={19} /><span>Central de ajuda</span></button>
-        <button className="profile-button">
+        <button className="nav-item quiet" onClick={() => setUtilityModal("help")}><CircleHelp size={19} /><span>Central de ajuda</span></button>
+        <button className="profile-button" onClick={() => setUtilityModal("profile")}>
           <span className="avatar">JE</span>
           <span><strong>José Enrique</strong><small>Meu espaço</small></span>
           <MoreHorizontal size={18} />
@@ -339,11 +315,11 @@ export default function Home() {
           <button className="icon-button mobile-menu" aria-label="Abrir menu" onClick={() => setMobileMenu(true)}><Menu size={21} /></button>
           <div className="search-box">
             <Search size={18} />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar conteúdo, tema ou formato..." aria-label="Buscar conteúdo" />
+            <input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar conteúdo, tema ou formato..." aria-label="Buscar conteúdo" />
             <kbd>⌘ K</kbd>
           </div>
           <div className="top-actions">
-            <button className="icon-button notification" aria-label="Notificações"><Bell size={20} /><span /></button>
+            <button className="icon-button notification" aria-label="Notificações" onClick={() => setUtilityModal("notifications")}><Bell size={20} /></button>
             <button className="button primary" onClick={() => openAdd()}><Plus size={18} /> Novo conteúdo</button>
           </div>
         </header>
@@ -357,7 +333,7 @@ export default function Home() {
             </div>
             {view === "desempenho" && (
               <button className={`button ${instagramDemo ? "connected" : "secondary"}`} onClick={() => setInstagramOpen(true)}>
-                <Instagram size={18} /> {instagramDemo ? "Instagram em demonstração" : "Conectar Instagram"}
+                <Instagram size={18} /> {instagramDemo ? "Instagram demonstrativo" : "Configurar Instagram"}
               </button>
             )}
           </section>
@@ -385,7 +361,16 @@ export default function Home() {
               onAdd={() => openAdd()}
             />
           )}
-          {view === "desempenho" && <PerformanceView demo={instagramDemo} onConnect={() => setInstagramOpen(true)} />}
+          {view === "roteiros" && !selected && <EmptyWorkspace onAdd={() => openAdd()} />}
+          {view === "desempenho" && (
+            <PerformanceView
+              demo={instagramDemo}
+              onConnect={() => setInstagramOpen(true)}
+              onDisableDemo={disableInstagramDemo}
+              onCreateFromInsight={createFromInsight}
+              onNotify={announce}
+            />
+          )}
         </div>
       </main>
 
@@ -435,6 +420,46 @@ export default function Home() {
         </Modal>
       )}
 
+      {utilityModal === "notifications" && (
+        <Modal onClose={() => setUtilityModal(null)}>
+          <div className="utility-modal">
+            <div className="modal-icon mint"><Bell size={22} /></div>
+            <span className="eyebrow">NOTIFICAÇÕES</span>
+            <h2>Tudo em dia</h2>
+            <p>Você não tem notificações novas. Avisos de gravação e publicação aparecerão aqui.</p>
+            <div className="utility-empty"><CheckCircle2 size={24} /><strong>Nenhuma pendência</strong><small>Quando houver uma ação programada, o MAPA avisará você.</small></div>
+            <div className="modal-actions"><button className="button primary" onClick={() => setUtilityModal(null)}>Entendi</button></div>
+          </div>
+        </Modal>
+      )}
+
+      {utilityModal === "help" && (
+        <Modal onClose={() => setUtilityModal(null)} wide>
+          <div className="utility-modal">
+            <div className="modal-icon mint"><MessageCircle size={22} /></div>
+            <span className="eyebrow">CENTRAL DE AJUDA</span>
+            <h2>Comece em três passos</h2>
+            <p>O fluxo foi pensado para você sair da ideia e chegar à publicação sem perder contexto.</p>
+            <div className="help-steps">
+              <div><span>1</span><p><strong>Registre a ideia</strong><small>Use “Novo conteúdo” assim que surgir uma pauta.</small></p></div>
+              <div><span>2</span><p><strong>Escreva o roteiro</strong><small>Preencha gancho, desenvolvimento, CTA e direção visual.</small></p></div>
+              <div><span>3</span><p><strong>Mova pelo fluxo</strong><small>Arraste o cartão até gravação, edição e agendamento.</small></p></div>
+            </div>
+            <div className="modal-actions"><button className="button ghost" onClick={() => setUtilityModal(null)}>Fechar</button><button className="button primary" onClick={() => { setUtilityModal(null); openAdd(); }}><Plus size={18} /> Criar conteúdo</button></div>
+          </div>
+        </Modal>
+      )}
+
+      {utilityModal === "profile" && (
+        <Modal onClose={() => setUtilityModal(null)}>
+          <div className="utility-modal">
+            <div className="profile-modal-head"><span className="avatar large">JE</span><span><span className="eyebrow">MEU ESPAÇO</span><h2>José Enrique</h2><p>Dados salvos neste navegador</p></span></div>
+            <div className="workspace-summary"><Settings2 size={20} /><span><strong>{contents.length} conteúdos cadastrados</strong><small>O MAPA começa vazio e mantém apenas o que você adicionar.</small></span></div>
+            <div className="modal-actions"><button className="button ghost danger" onClick={resetWorkspace}>Zerar meu espaço</button><button className="button primary" onClick={() => setUtilityModal(null)}>Concluir</button></div>
+          </div>
+        </Modal>
+      )}
+
       {toast && <div className="toast" role="status"><CheckCircle2 size={19} />{toast}</div>}
     </div>
   );
@@ -459,15 +484,17 @@ function TodayView({
   onStatusChange: (id: number, status: Status) => void;
   onAdd: () => void;
 }) {
-  const todayItems = contents.filter((item) => ["2026-08-04", "2026-08-05"].includes(item.date));
+  const todayItems = contents.filter((item) => item.date === todayIso);
   const boardStatuses: Status[] = ["Ideia", "Roteiro", "Gravação", "Edição", "Agendado"];
+  const consistency = Math.min(100, Math.round((published / 5) * 100));
+  const activeDays = Array.from({ length: 7 }, (_, index) => index < Math.min(published, 7));
   return (
     <>
       <section className="metrics-grid">
-        <MetricCard icon={<Zap size={19} />} tone="lime" label="Em produção" value={String(inProgress)} detail="3 etapas ativas" />
-        <MetricCard icon={<CalendarDays size={19} />} tone="blue" label="Agendados" value={String(scheduled)} detail="Próximos 7 dias" />
+        <MetricCard icon={<Zap size={19} />} tone="lime" label="Em produção" value={String(inProgress)} detail={inProgress ? "Roteiro, gravação ou edição" : "Nenhum item em produção"} />
+        <MetricCard icon={<CalendarDays size={19} />} tone="blue" label="Agendados" value={String(scheduled)} detail={scheduled ? "Prontos para publicar" : "Nada agendado"} />
         <MetricCard icon={<CheckCircle2 size={19} />} tone="violet" label="Publicados" value={String(published)} detail="Neste mês" />
-        <MetricCard icon={<Target size={19} />} tone="coral" label="Consistência" value="60%" detail="+12% vs. julho" positive />
+        <MetricCard icon={<Target size={19} />} tone="coral" label="Consistência" value={`${consistency}%`} detail={published ? `${published} de 5 na meta semanal` : "Comece com a primeira publicação"} positive={published > 0} />
       </section>
 
       <section className="dashboard-grid">
@@ -488,11 +515,11 @@ function TodayView({
         </div>
 
         <div className="panel momentum-panel">
-          <div className="momentum-top"><span className="panel-icon"><TrendingUp size={19} /></span><span><small>RITMO DE PUBLICAÇÃO</small><strong>Boa cadência!</strong></span></div>
-          <div className="streak-row"><strong>4</strong><span>semanas<br />consistentes</span></div>
-          <div className="week-dots">{[true, true, true, false, true, false, false].map((active, index) => <div key={weekDays[index]}><span className={active ? "done" : index === 4 ? "today" : ""}>{active ? <Check size={15} /> : weekDays[index].slice(0, 1)}</span><small>{weekDays[index]}</small></div>)}</div>
-          <p>Você publica melhor quando grava em lote. Reserve sexta-feira para os próximos 3 vídeos.</p>
-          <button className="text-button" onClick={() => onView("desempenho")}>Ver análise completa <ArrowUpRight size={16} /></button>
+          <div className="momentum-top"><span className="panel-icon"><TrendingUp size={19} /></span><span><small>RITMO DE PUBLICAÇÃO</small><strong>{contents.length ? "Ritmo em construção" : "Pronto para começar"}</strong></span></div>
+          <div className="streak-row"><strong>{published}</strong><span>publicações<br />neste ciclo</span></div>
+          <div className="week-dots">{activeDays.map((active, index) => <div key={weekDays[index]}><span className={active ? "done" : index === 1 ? "today" : ""}>{active ? <Check size={15} /> : weekDays[index].slice(0, 1)}</span><small>{weekDays[index]}</small></div>)}</div>
+          <p>{contents.length ? "Continue movendo os conteúdos pelo fluxo para manter a cadência." : "Adicione uma ideia e o MAPA começará a acompanhar sua consistência."}</p>
+          <button className="text-button" onClick={() => contents.length ? onView("desempenho") : onAdd()}>{contents.length ? "Ver análise completa" : "Criar primeiro conteúdo"} <ArrowUpRight size={16} /></button>
         </div>
       </section>
 
@@ -522,27 +549,53 @@ function TodayView({
 }
 
 function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; onAdd: (date?: string) => void; onSelect: (id: number) => void }) {
-  const days = Array.from({ length: 31 }, (_, index) => index + 1);
-  const slots = [...Array(5).fill(null), ...days];
+  const referenceToday = new Date(`${todayIso}T12:00:00`);
+  const [month, setMonth] = useState(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1));
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [formatFilter, setFormatFilter] = useState<"Todos" | ContentItem["format"]>("Todos");
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const leadingSlots = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
+  const totalSlots = Math.ceil((leadingSlots + daysInMonth) / 7) * 7;
+  const slots = Array.from({ length: totalSlots }, (_, index) => {
+    const day = index - leadingSlots + 1;
+    return day > 0 && day <= daysInMonth ? day : null;
+  });
+  const monthNameRaw = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(month);
+  const monthName = monthNameRaw.charAt(0).toUpperCase() + monthNameRaw.slice(1);
+  const filteredByFormat = formatFilter === "Todos" ? contents : contents.filter((item) => item.format === formatFilter);
+
+  function changeMonth(offset: number) {
+    setMonth(new Date(year, monthIndex + offset, 1));
+  }
+
   return (
     <section className="panel calendar-panel">
       <div className="calendar-toolbar">
-        <div className="month-switcher"><button className="icon-button" aria-label="Mês anterior"><ChevronLeft size={19} /></button><h2>Agosto <span>2026</span></h2><button className="icon-button" aria-label="Próximo mês"><ChevronRight size={19} /></button></div>
-        <div className="toolbar-actions"><button className="button ghost small"><Filter size={16} /> Filtrar</button><button className="button secondary small">Hoje</button><button className="button primary small" onClick={() => onAdd()}><Plus size={16} /> Adicionar</button></div>
+        <div className="month-switcher"><button className="icon-button" aria-label="Mês anterior" onClick={() => changeMonth(-1)}><ChevronLeft size={19} /></button><h2>{monthName} <span>{year}</span></h2><button className="icon-button" aria-label="Próximo mês" onClick={() => changeMonth(1)}><ChevronRight size={19} /></button></div>
+        <div className="toolbar-actions">
+          <div className="filter-wrap">
+            <button className="button ghost small" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><Filter size={16} /> {formatFilter === "Todos" ? "Filtrar" : formatFilter}</button>
+            {filterOpen && <div className="filter-menu">{(["Todos", "Reel", "Carrossel", "Stories", "YouTube"] as const).map((format) => <button key={format} className={formatFilter === format ? "active" : ""} onClick={() => { setFormatFilter(format); setFilterOpen(false); }}>{formatFilter === format && <Check size={14} />}{format}</button>)}</div>}
+          </div>
+          <button className="button secondary small" onClick={() => setMonth(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1))}>Hoje</button>
+          <button className="button primary small" onClick={() => onAdd()}><Plus size={16} /> Adicionar</button>
+        </div>
       </div>
       <div className="calendar-grid calendar-weekdays">{weekDays.map((day) => <div key={day}>{day}</div>)}</div>
       <div className="calendar-grid month-grid">
         {slots.map((day, index) => {
           if (!day) return <div className="day-cell outside" key={`blank-${index}`} />;
-          const date = `2026-08-${String(day).padStart(2, "0")}`;
-          const dayItems = contents.filter((item) => item.date === date);
+          const date = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const dayItems = filteredByFormat.filter((item) => item.date === date);
           return (
-            <div className={`day-cell ${day === 4 ? "current-day" : ""}`} key={date} onDoubleClick={() => onAdd(date)}>
-              <div className="day-number"><span>{day}</span>{dayItems.length > 0 && <button aria-label={`Adicionar em ${day} de agosto`} onClick={() => onAdd(date)}><Plus size={13} /></button>}</div>
+            <div className={`day-cell ${date === todayIso ? "current-day" : ""}`} key={date} onDoubleClick={() => onAdd(date)}>
+              <div className="day-number"><span>{day}</span>{dayItems.length > 0 && <button aria-label={`Adicionar em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={13} /></button>}</div>
               <div className="day-items">
                 {dayItems.slice(0, 3).map((item) => <button key={item.id} className={`calendar-item ${formatColors[item.format]}`} onClick={() => onSelect(item.id)}><span>{item.format === "Reel" ? <Play size={11} fill="currentColor" /> : <FileText size={11} />}</span><strong>{item.title}</strong></button>)}
               </div>
-              {dayItems.length === 0 && <button className="day-add" onClick={() => onAdd(date)}><Plus size={14} /></button>}
+              {dayItems.length === 0 && <button className="day-add" aria-label={`Adicionar conteúdo em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={14} /></button>}
             </div>
           );
         })}
@@ -553,19 +606,29 @@ function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; 
 }
 
 function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: number) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onSave: () => void; onAdd: () => void }) {
+  const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
+  const visibleContents = contents.filter((item) => {
+    if (libraryFilter === "Em roteiro") return item.status === "Roteiro";
+    if (libraryFilter === "Prontos") return ["Agendado", "Publicado"].includes(item.status);
+    return true;
+  });
+
   return (
     <section className="scripts-layout">
       <aside className="panel script-library">
         <div className="library-head"><div><span className="eyebrow">BIBLIOTECA</span><h2>Seus conteúdos</h2></div><button className="icon-button dark" aria-label="Novo roteiro" onClick={onAdd}><Plus size={18} /></button></div>
-        <div className="library-filters"><button className="active">Todos <span>{contents.length}</span></button><button>Em roteiro</button><button>Prontos</button></div>
+        <div className="library-filters">
+          {(["Todos", "Em roteiro", "Prontos"] as const).map((filter) => <button key={filter} className={libraryFilter === filter ? "active" : ""} onClick={() => setLibraryFilter(filter)}>{filter}{filter === "Todos" && <span>{contents.length}</span>}</button>)}
+        </div>
         <div className="library-list">
-          {contents.map((item) => (
+          {visibleContents.map((item) => (
             <button key={item.id} className={item.id === selected.id ? "library-item selected" : "library-item"} onClick={() => onSelect(item.id)}>
               <span className={`format-icon mini ${formatColors[item.format]}`}>{item.format === "Reel" ? <Play size={15} /> : <FileText size={15} />}</span>
               <span><strong>{item.title}</strong><small>{item.format} · Editado {item.id % 2 ? "hoje" : "ontem"}</small></span>
               <ChevronRight size={16} />
             </button>
           ))}
+          {visibleContents.length === 0 && <div className="library-empty"><FileText size={22} /><strong>Nenhum conteúdo aqui</strong><small>Escolha outro filtro ou adicione uma nova pauta.</small></div>}
         </div>
       </aside>
 
@@ -596,54 +659,108 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
   );
 }
 
-function PerformanceView({ demo, onConnect }: { demo: boolean; onConnect: () => void }) {
-  const bars = [38, 52, 45, 67, 58, 82, 72, 92, 76, 88, 66, 96];
-  return (
-    <>
-      {!demo && (
+function PerformanceView({
+  demo,
+  onConnect,
+  onDisableDemo,
+  onCreateFromInsight,
+  onNotify,
+}: {
+  demo: boolean;
+  onConnect: () => void;
+  onDisableDemo: () => void;
+  onCreateFromInsight: () => void;
+  onNotify: (message: string) => void;
+}) {
+  type Period = "30" | "90" | "year";
+  const [period, setPeriod] = useState<Period>("30");
+  const datasets: Record<Period, { views: string; reach: string; engagement: string; followers: string; total: string; growth: string; bars: number[] }> = {
+    "30": { views: "128,4 mil", reach: "74,8 mil", engagement: "6,8%", followers: "+1.284", total: "128.420", growth: "18,2%", bars: [38, 52, 45, 67, 58, 82, 72, 92, 76, 88, 66, 96] },
+    "90": { views: "361,7 mil", reach: "205,2 mil", engagement: "6,1%", followers: "+3.506", total: "361.740", growth: "24,7%", bars: [32, 45, 41, 55, 63, 59, 70, 74, 68, 82, 88, 94] },
+    year: { views: "1,2 mi", reach: "684 mil", engagement: "5,9%", followers: "+11.842", total: "1.204.870", growth: "31,4%", bars: [25, 31, 43, 39, 52, 61, 56, 68, 75, 79, 87, 98] },
+  };
+  const data = datasets[period];
+  const ranking = [
+    ["Proteína depois dos 60", "Reel · 01 ago", "42,8 mil", "71%", "3.842", "9,4"],
+    ["Creatina: o mito dos rins", "Reel · 27 jul", "31,2 mil", "68%", "2.915", "9,1"],
+    ["O que a balança não mostra", "Carrossel · 24 jul", "18,6 mil", "62%", "2.104", "8,7"],
+  ];
+
+  function exportReport() {
+    const rows = [["Conteúdo", "Formato/Data", "Visualizações", "Retenção", "Interações", "Nota MAPA"], ...ranking];
+    const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `mapa-relatorio-${period}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    onNotify("Relatório de demonstração exportado.");
+  }
+
+  if (!demo) {
+    return (
+      <>
         <section className="connect-banner">
           <div className="connect-visual"><Instagram size={29} /><span><i /><i /><i /></span></div>
-          <div><span className="eyebrow">TRANSFORME NÚMEROS EM DECISÕES</span><h2>Descubra o padrão por trás dos seus melhores conteúdos</h2><p>Conecte uma conta profissional ou explore o painel com dados de demonstração.</p></div>
-          <button className="button instagram-button" onClick={onConnect}><Instagram size={18} /> Explorar integração</button>
+          <div><span className="eyebrow">PAINEL ZERADO</span><h2>Conecte seus dados quando estiver pronto</h2><p>Nenhuma métrica fictícia é exibida. Você também pode conhecer o painel usando a demonstração identificada.</p></div>
+          <button className="button instagram-button" onClick={onConnect}><Instagram size={18} /> Ver opções</button>
         </section>
-      )}
-      {demo && <div className="demo-banner"><span><Sparkles size={16} /> Modo demonstração</span><p>Estes dados ilustram como suas métricas reais aparecerão depois da conexão oficial.</p><button onClick={onConnect}>Configurar conexão <ChevronRight size={15} /></button></div>}
+        <section className="metrics-grid analytics-metrics">
+          <MetricCard icon={<Eye size={19} />} tone="lime" label="Visualizações" value="0" detail="Sem dados importados" />
+          <MetricCard icon={<Users size={19} />} tone="blue" label="Alcance" value="0" detail="Sem dados importados" />
+          <MetricCard icon={<Heart size={19} />} tone="coral" label="Engajamento" value="0%" detail="Sem dados importados" />
+          <MetricCard icon={<TrendingUp size={19} />} tone="violet" label="Novos seguidores" value="0" detail="Sem dados importados" />
+        </section>
+        <section className="panel empty-analytics">
+          <span className="empty-state-icon"><BarChart3 size={28} /></span>
+          <h2>Nenhum desempenho registrado</h2>
+          <p>Quando a integração oficial estiver configurada, seus conteúdos e métricas aparecerão aqui.</p>
+          <button className="button secondary" onClick={onConnect}><Instagram size={17} /> Conhecer a integração</button>
+        </section>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="demo-banner"><span><Sparkles size={16} /> Modo demonstração</span><p>Os números abaixo são apenas exemplos e não pertencem à sua conta.</p><button onClick={onDisableDemo}>Sair da demonstração <X size={15} /></button></div>
 
       <section className="analytics-head">
-        <div className="period-tabs"><button className="active">Últimos 30 dias</button><button>90 dias</button><button>Este ano</button></div>
-        <span className="sync-state"><span /> Atualizado há 12 min</span>
+        <div className="period-tabs">
+          <button className={period === "30" ? "active" : ""} onClick={() => setPeriod("30")}>Últimos 30 dias</button>
+          <button className={period === "90" ? "active" : ""} onClick={() => setPeriod("90")}>90 dias</button>
+          <button className={period === "year" ? "active" : ""} onClick={() => setPeriod("year")}>Este ano</button>
+        </div>
+        <span className="sync-state demo"><span /> Dados de demonstração</span>
       </section>
       <section className="metrics-grid analytics-metrics">
-        <MetricCard icon={<Eye size={19} />} tone="lime" label="Visualizações" value="128,4 mil" detail="+18,2% no período" positive />
-        <MetricCard icon={<Users size={19} />} tone="blue" label="Alcance" value="74,8 mil" detail="+9,6% no período" positive />
-        <MetricCard icon={<Heart size={19} />} tone="coral" label="Engajamento" value="6,8%" detail="+1,4 p.p. no período" positive />
-        <MetricCard icon={<TrendingUp size={19} />} tone="violet" label="Novos seguidores" value="+1.284" detail="+22,1% no período" positive />
+        <MetricCard icon={<Eye size={19} />} tone="lime" label="Visualizações" value={data.views} detail="Exemplo do período" positive />
+        <MetricCard icon={<Users size={19} />} tone="blue" label="Alcance" value={data.reach} detail="Exemplo do período" positive />
+        <MetricCard icon={<Heart size={19} />} tone="coral" label="Engajamento" value={data.engagement} detail="Exemplo do período" positive />
+        <MetricCard icon={<TrendingUp size={19} />} tone="violet" label="Novos seguidores" value={data.followers} detail="Exemplo do período" positive />
       </section>
 
       <section className="analytics-grid">
         <div className="panel chart-panel">
-          <PanelHeader eyebrow="EVOLUÇÃO" title="Visualizações por publicação" action="Ver detalhes" />
-          <div className="chart-total"><strong>128.420</strong><span><TrendingUp size={14} /> 18,2%</span><small>vs. período anterior</small></div>
-          <div className="bar-chart">{bars.map((height, index) => <div key={index} className={index === 11 ? "highlight" : ""}><span style={{ height: `${height}%` }} /><small>{index % 2 === 0 ? `${index + 3}/07` : ""}</small></div>)}</div>
+          <PanelHeader eyebrow="EVOLUÇÃO" title="Visualizações por publicação" action="Ver detalhes" onAction={() => onNotify(`Período selecionado: ${period === "30" ? "últimos 30 dias" : period === "90" ? "90 dias" : "este ano"}.`)} />
+          <div className="chart-total"><strong>{data.total}</strong><span><TrendingUp size={14} /> {data.growth}</span><small>exemplo comparativo</small></div>
+          <div className="bar-chart">{data.bars.map((height, index) => <div key={index} className={index === 11 ? "highlight" : ""}><span style={{ height: `${height}%` }} /><small>{index % 2 === 0 ? `${index + 1}` : ""}</small></div>)}</div>
         </div>
         <div className="panel insight-panel">
-          <div className="insight-heading"><span className="panel-icon"><Sparkles size={18} /></span><div><span className="eyebrow">INSIGHT DO MAPA</span><h2>Seu padrão vencedor</h2></div></div>
-          <p className="insight-lead">Conteúdos que <strong>abrem com uma pergunta clínica</strong> geraram 2,4× mais salvamentos.</p>
-          <div className="insight-proof"><span><Bookmark size={17} /> Salvamentos médios</span><strong>642</strong><small>vs. 268 nos demais</small></div>
+          <div className="insight-heading"><span className="panel-icon"><Sparkles size={18} /></span><div><span className="eyebrow">INSIGHT DE EXEMPLO</span><h2>Seu padrão vencedor</h2></div></div>
+          <p className="insight-lead">Conteúdos que <strong>abrem com uma pergunta clínica</strong> podem gerar mais salvamentos.</p>
+          <div className="insight-proof"><span><Bookmark size={17} /> Salvamentos do exemplo</span><strong>642</strong><small>vs. 268 nos demais</small></div>
           <div className="next-action"><Lightbulb size={18} /><p><strong>Próxima ação</strong>Comece o próximo Reel com: “O que a balança não está mostrando?”</p></div>
-          <button className="button secondary full"><PencilLine size={17} /> Criar roteiro a partir deste insight</button>
+          <button className="button secondary full" onClick={onCreateFromInsight}><PencilLine size={17} /> Criar roteiro a partir deste insight</button>
         </div>
       </section>
 
       <section className="panel top-content-panel">
-        <PanelHeader eyebrow="RANKING" title="Conteúdos com melhor desempenho" action="Exportar relatório" />
+        <PanelHeader eyebrow="RANKING DE EXEMPLO" title="Conteúdos com melhor desempenho" action="Exportar relatório" onAction={exportReport} />
         <div className="ranking-table">
           <div className="ranking-row ranking-head"><span>Conteúdo</span><span>Visualizações</span><span>Retenção</span><span>Interações</span><span>Nota MAPA</span></div>
-          {[
-            ["Proteína depois dos 60", "Reel · 01 ago", "42,8 mil", "71%", "3.842", "9,4"],
-            ["Creatina: o mito dos rins", "Reel · 27 jul", "31,2 mil", "68%", "2.915", "9,1"],
-            ["O que a balança não mostra", "Carrossel · 24 jul", "18,6 mil", "62%", "2.104", "8,7"],
-          ].map((row, index) => (
+          {ranking.map((row, index) => (
             <div className="ranking-row" key={row[0]}><span className="rank-title"><em>0{index + 1}</em><i className={`rank-thumb thumb-${index + 1}`}><Play size={15} /></i><span><strong>{row[0]}</strong><small>{row[1]}</small></span></span><span>{row[2]}</span><span>{row[3]}</span><span className="interaction-icons"><Heart size={14} /> {row[4]}</span><span className="mapa-score"><Sparkles size={14} /> {row[5]}</span></div>
           ))}
         </div>
@@ -654,6 +771,18 @@ function PerformanceView({ demo, onConnect }: { demo: boolean; onConnect: () => 
 
 function MetricCard({ icon, tone, label, value, detail, positive }: { icon: React.ReactNode; tone: string; label: string; value: string; detail: string; positive?: boolean }) {
   return <article className="metric-card"><span className={`metric-icon ${tone}`}>{icon}</span><div><small>{label}</small><strong>{value}</strong><p className={positive ? "positive" : ""}>{positive && <TrendingUp size={13} />} {detail}</p></div></article>;
+}
+
+function EmptyWorkspace({ onAdd }: { onAdd: () => void }) {
+  return (
+    <section className="panel empty-workspace">
+      <span className="empty-state-icon"><FileText size={30} /></span>
+      <span className="eyebrow">BIBLIOTECA VAZIA</span>
+      <h2>Crie seu primeiro roteiro</h2>
+      <p>O aplicativo está zerado. Adicione uma pauta e use o editor para construir gancho, roteiro, CTA e direção visual.</p>
+      <button className="button primary" onClick={onAdd}><Plus size={18} /> Novo conteúdo</button>
+    </section>
+  );
 }
 
 function PanelHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) {
