@@ -356,7 +356,8 @@ async function handleCallback(req: Request) {
   await admin.from("google_drive_oauth_states").delete().eq("state_hash", stateHash);
 
   if (oauthError || !code) {
-    return Response.redirect(appRedirect("/?drive=cancelled"), 302);
+    const separator = oauthState.redirect_to.includes("?") ? "&" : "?";
+    return Response.redirect(appRedirect(`${oauthState.redirect_to}${separator}drive=cancelled`), 302);
   }
 
   const tokenPayload = await atStage("token_exchange", () => exchangeAuthorizationCode(code));
@@ -386,7 +387,9 @@ async function handleCallback(req: Request) {
       refresh_token_ciphertext: refreshTokenCiphertext,
       granted_scopes: String(tokenPayload.scope || allowedScopes.join(" ")).split(/\s+/).filter(Boolean),
       token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      folder_id: existingConnection?.folder_id || null,
+      folder_id: existingConnection?.google_user_id === googleUserId
+        ? existingConnection.folder_id
+        : null,
       folder_name: existingConnection?.folder_name || driveFolderName,
     }, { onConflict: "user_id" });
     if (error) throw error;
