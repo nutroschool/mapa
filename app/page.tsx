@@ -63,6 +63,7 @@ import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type View = "hoje" | "calendario" | "roteiros" | "desempenho";
 type Status = "Ideia" | "Roteiro" | "Gravação" | "Edição" | "Agendado" | "Publicado";
+type FunnelStage = "Topo de funil" | "Meio de funil" | "Fundo de funil";
 
 type ContentItem = {
   id: string;
@@ -95,6 +96,7 @@ type ContentRow = {
 const initialContents: ContentItem[] = [];
 
 const statusOrder: Status[] = ["Ideia", "Roteiro", "Gravação", "Edição", "Agendado", "Publicado"];
+const funnelStages: FunnelStage[] = ["Topo de funil", "Meio de funil", "Fundo de funil"];
 const weekDays = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
 const storageKey = "mapa-content-items-v2";
 const instagramDemoKey = "mapa-instagram-demo-v2";
@@ -128,18 +130,60 @@ const scriptBlockDefinitions = [
 ] as const;
 
 type ScriptBlockId = (typeof scriptBlockDefinitions)[number]["id"];
-type ScriptBlock = { text: string; note: string; bold: boolean; color: string };
-type ScriptDocument = { version: 1; blocks: Record<ScriptBlockId, ScriptBlock> };
+type ScriptBlockDefinition = (typeof scriptBlockDefinitions)[number];
+type ScriptBlock = { html: string; note: string; color: string };
+type ScriptDocument = { version: 2; blocks: Record<ScriptBlockId, ScriptBlock> };
 
 const scriptColorPresets = ["#333949", "#b84f3f", "#4770b8", "#7855ad", "#397a57"];
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function plainTextToRichHtml(value: string) {
+  return escapeHtml(value).replace(/\r?\n/g, "<br>");
+}
+
+function sanitizeRichTextHtml(value: string) {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, (tag) => {
+      if (/^<br\s*\/?\s*>$/i.test(tag)) return "<br>";
+      if (/^<(?:b|strong)(?:\s[^>]*)?>$/i.test(tag)) return "<strong>";
+      if (/^<\/(?:b|strong)>$/i.test(tag)) return "</strong>";
+      if (/^<\/(?:div|p)>$/i.test(tag)) return "<br>";
+      return "";
+    })
+    .replace(/(?:<br>){3,}/g, "<br><br>");
+}
+
+function richTextToPlainText(value: string) {
+  return value
+    .replace(/<br>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeFunnelStage(value: string): FunnelStage {
+  return funnelStages.includes(value as FunnelStage) ? value as FunnelStage : "Topo de funil";
+}
+
 function createEmptyScriptDocument(): ScriptDocument {
   return {
-    version: 1,
+    version: 2,
     blocks: Object.fromEntries(
       scriptBlockDefinitions.map((definition) => [
         definition.id,
-        { text: "", note: "", bold: false, color: scriptColorPresets[0] },
+        { html: "", note: "", color: scriptColorPresets[0] },
       ]),
     ) as Record<ScriptBlockId, ScriptBlock>,
   };
@@ -151,15 +195,20 @@ function parseScriptDocument(item: ContentItem): ScriptDocument {
   if (item.script.trim()) {
     try {
       const parsed = JSON.parse(item.script) as { version?: unknown; blocks?: Record<string, unknown> };
-      if (parsed.version === 1 && parsed.blocks && typeof parsed.blocks === "object") {
+      if ((parsed.version === 1 || parsed.version === 2) && parsed.blocks && typeof parsed.blocks === "object") {
         scriptBlockDefinitions.forEach((definition) => {
           const value = parsed.blocks?.[definition.id];
           if (!value || typeof value !== "object") return;
-          const block = value as Partial<ScriptBlock>;
+          const block = value as Partial<ScriptBlock> & { text?: string; bold?: boolean };
+          const legacyText = typeof block.text === "string" ? block.text : "";
+          const legacyHtml = plainTextToRichHtml(legacyText);
           document.blocks[definition.id] = {
-            text: typeof block.text === "string" ? block.text : "",
+            html: typeof block.html === "string"
+              ? sanitizeRichTextHtml(block.html)
+              : block.bold === true && legacyHtml
+                ? `<strong>${legacyHtml}</strong>`
+                : legacyHtml,
             note: typeof block.note === "string" ? block.note : "",
-            bold: block.bold === true,
             color: typeof block.color === "string" ? block.color : scriptColorPresets[0],
           };
         });
@@ -184,14 +233,14 @@ function parseScriptDocument(item: ContentItem): ScriptDocument {
       if (!definition) return;
       const start = (heading.index ?? 0) + heading[0].length;
       const end = headings[index + 1]?.index ?? legacyText.length;
-      document.blocks[definition.id].text = legacyText.slice(start, end).trim();
+      document.blocks[definition.id].html = plainTextToRichHtml(legacyText.slice(start, end).trim());
     });
     return document;
   }
 
-  document.blocks.headline.text = item.hook.trim();
-  document.blocks.notableOne.text = item.script.trim();
-  document.blocks.presentation.text = item.cta.trim();
+  document.blocks.headline.html = plainTextToRichHtml(item.hook.trim());
+  document.blocks.notableOne.html = plainTextToRichHtml(item.script.trim());
+  document.blocks.presentation.html = plainTextToRichHtml(item.cta.trim());
   document.blocks.presentation.note = item.notes.trim();
   return document;
 }
@@ -207,7 +256,7 @@ function rowToContent(row: ContentRow): ContentItem {
     id: row.id,
     title: row.title,
     format: row.format,
-    pillar: row.pillar,
+    pillar: normalizeFunnelStage(row.pillar),
     status: row.status,
     date: row.scheduled_date,
     duration: row.duration,
@@ -290,7 +339,7 @@ function Workspace({ user }: { user: User | null }) {
   const [newItem, setNewItem] = useState({
     title: "",
     format: "Reel" as ContentItem["format"],
-    pillar: "Educação",
+    pillar: "Topo de funil" as FunnelStage,
     date: todayIso,
     status: "Ideia" as Status,
   });
@@ -373,7 +422,7 @@ function Workspace({ user }: { user: User | null }) {
           const parsed = JSON.parse(saved);
           setContents(
             Array.isArray(parsed)
-              ? parsed.map((item) => ({ ...item, id: String(item.id) }))
+              ? parsed.map((item) => ({ ...item, id: String(item.id), pillar: normalizeFunnelStage(String(item.pillar || "")) }))
               : initialContents,
           );
         } catch {
@@ -513,6 +562,31 @@ function Workspace({ user }: { user: User | null }) {
     announce(`Conteúdo movido para ${status}.`);
   }
 
+  async function moveContentDate(id: string, date: string) {
+    const current = contents.find((item) => item.id === id);
+    if (!current || current.date === date) return;
+
+    const previousDate = current.date;
+    setContents((items) => items.map((item) => (item.id === id ? { ...item, date } : item)));
+
+    if (supabase && user) {
+      const { error } = await supabase
+        .from("content_items")
+        .update({ scheduled_date: date })
+        .eq("id", id)
+        .eq("user_id", user.id);
+      if (error) {
+        setContents((items) => items.map((item) => (
+          item.id === id && item.date === date ? { ...item, date: previousDate } : item
+        )));
+        announce("Não foi possível salvar a nova data. O conteúdo voltou ao dia anterior.");
+        return;
+      }
+    }
+
+    announce(`Conteúdo movido para ${formatShortDate(date)}.`);
+  }
+
   function updateSelected(field: keyof ContentItem, value: string) {
     if (!selectedId || field === "id") return;
     const itemId = selectedId;
@@ -552,7 +626,7 @@ function Workspace({ user }: { user: User | null }) {
     setContents((items) => [...items, item]);
     setSelectedId(item.id);
     setAddOpen(false);
-    setNewItem({ title: "", format: "Reel", pillar: "Educação", date: todayIso, status: "Ideia" });
+    setNewItem({ title: "", format: "Reel", pillar: "Topo de funil", date: todayIso, status: "Ideia" });
     if (supabase && user) {
       const { error } = await supabase.from("content_items").insert(contentToRow(item, user.id));
       if (error) {
@@ -638,7 +712,7 @@ function Workspace({ user }: { user: User | null }) {
       id: crypto.randomUUID(),
       title: "O que a balança não está mostrando?",
       format: "Reel",
-      pillar: "Educação",
+      pillar: "Topo de funil",
       status: "Roteiro",
       date: todayIso,
       duration: "60s",
@@ -822,7 +896,7 @@ function Workspace({ user }: { user: User | null }) {
               onAdd={() => openAdd()}
             />
           )}
-          {view === "calendario" && <CalendarView contents={filteredContents} onAdd={openAdd} onSelect={(id) => { setSelectedId(id); setView("roteiros"); }} />}
+          {view === "calendario" && <CalendarView contents={filteredContents} onAdd={openAdd} onMove={(id, date) => void moveContentDate(id, date)} onSelect={(id) => { setSelectedId(id); setView("roteiros"); }} />}
           {view === "roteiros" && selected && (
             <ScriptsView
               contents={filteredContents}
@@ -873,7 +947,7 @@ function Workspace({ user }: { user: User | null }) {
               <label>Etapa<select value={newItem.status} onChange={(event) => setNewItem({ ...newItem, status: event.target.value as Status })}>{statusOrder.map((status) => <option key={status}>{status}</option>)}</select></label>
             </div>
             <div className="form-grid">
-              <label>Pilar<input value={newItem.pillar} onChange={(event) => setNewItem({ ...newItem, pillar: event.target.value })} /></label>
+              <label>Etapa de funil<select value={newItem.pillar} onChange={(event) => setNewItem({ ...newItem, pillar: event.target.value as FunnelStage })}>{funnelStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
               <label>Data<input type="date" value={newItem.date} onChange={(event) => setNewItem({ ...newItem, date: event.target.value })} /></label>
             </div>
             <div className="modal-actions"><button type="button" className="button ghost" onClick={() => setAddOpen(false)}>Cancelar</button><button className="button primary" type="submit"><Plus size={18} /> Adicionar ao MAPA</button></div>
@@ -1159,11 +1233,13 @@ function TodayView({
   );
 }
 
-function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; onAdd: (date?: string) => void; onSelect: (id: string) => void }) {
+function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: ContentItem[]; onAdd: (date?: string) => void; onMove: (id: string, date: string) => void; onSelect: (id: string) => void }) {
   const referenceToday = new Date(`${todayIso}T12:00:00`);
   const [month, setMonth] = useState(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1));
   const [filterOpen, setFilterOpen] = useState(false);
   const [formatFilter, setFormatFilter] = useState<"Todos" | ContentItem["format"]>("Todos");
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropDate, setDropDate] = useState<string | null>(null);
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
@@ -1201,17 +1277,58 @@ function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; 
           const date = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const dayItems = filteredByFormat.filter((item) => item.date === date);
           return (
-            <div className={`day-cell ${date === todayIso ? "current-day" : ""}`} key={date} onDoubleClick={() => onAdd(date)}>
+            <div
+              className={`day-cell ${date === todayIso ? "current-day" : ""} ${dropDate === date ? "drop-target" : ""}`}
+              key={date}
+              onDoubleClick={() => onAdd(date)}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (draggedId) setDropDate(date);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                if (draggedId && dropDate !== date) setDropDate(date);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropDate(null);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const itemId = event.dataTransfer.getData("text/plain") || draggedId;
+                setDropDate(null);
+                setDraggedId(null);
+                if (itemId) onMove(itemId, date);
+              }}
+            >
               <div className="day-number"><span>{day}</span>{dayItems.length > 0 && <button aria-label={`Adicionar em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={13} /></button>}</div>
               <div className="day-items">
-                {dayItems.slice(0, 3).map((item) => <button key={item.id} className={`calendar-item ${formatColors[item.format]}`} onClick={() => onSelect(item.id)}><span>{item.format === "Reel" ? <Play size={11} fill="currentColor" /> : <FileText size={11} />}</span><strong>{item.title}</strong></button>)}
+                {dayItems.slice(0, 3).map((item) => (
+                  <button
+                    key={item.id}
+                    className={`calendar-item ${formatColors[item.format]} ${draggedId === item.id ? "dragging" : ""}`}
+                    draggable
+                    aria-grabbed={draggedId === item.id}
+                    title="Arraste para outro dia ou clique para abrir"
+                    onClick={() => onSelect(item.id)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", item.id);
+                      setDraggedId(item.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedId(null);
+                      setDropDate(null);
+                    }}
+                  ><span>{item.format === "Reel" ? <Play size={11} fill="currentColor" /> : <FileText size={11} />}</span><strong>{item.title}</strong></button>
+                ))}
               </div>
               {dayItems.length === 0 && <button className="day-add" aria-label={`Adicionar conteúdo em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={14} /></button>}
             </div>
           );
         })}
       </div>
-      <div className="calendar-legend"><span><i className="coral" /> Reel</span><span><i className="violet" /> Carrossel</span><span><i className="amber" /> Stories</span><span><i className="red" /> YouTube</span><small>Dica: dê dois cliques em um dia para adicionar uma pauta.</small></div>
+      <div className="calendar-legend"><span><i className="coral" /> Reel</span><span><i className="violet" /> Carrossel</span><span><i className="amber" /> Stories</span><span><i className="red" /> YouTube</span><small>Arraste um conteúdo para outro dia. Dê dois cliques para adicionar uma pauta.</small></div>
     </section>
   );
 }
@@ -1219,7 +1336,6 @@ function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; 
 function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
-  const [openNotes, setOpenNotes] = useState<Partial<Record<ScriptBlockId, boolean>>>({});
   const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
   const visibleContents = contents.filter((item) => {
     if (libraryFilter === "Em roteiro") return item.status === "Roteiro";
@@ -1227,7 +1343,7 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
     return true;
   });
   const totalWords = scriptBlockDefinitions.reduce((total, definition) => {
-    const text = scriptDocument.blocks[definition.id].text.trim();
+    const text = richTextToPlainText(scriptDocument.blocks[definition.id].html);
     return total + (text ? text.split(/\s+/).length : 0);
   }, 0);
 
@@ -1284,7 +1400,7 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
         </div>
         <div className="editor-scroll">
           <label className="title-input"><span>TÍTULO</span><input value={selected.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
-          <div className="brief-row"><span><CalendarDays size={15} /> {formatShortDate(selected.date)}</span><span><Clock3 size={15} /> {selected.duration}</span><span><Target size={15} /> {selected.pillar}</span></div>
+          <div className="brief-row"><span><CalendarDays size={15} /> {formatShortDate(selected.date)}</span><span><Clock3 size={15} /> {selected.duration}</span><span><Target size={15} /> Etapa: {selected.pillar}</span></div>
           <div className="script-document-summary">
             <div><Sparkles size={19} /><span><strong>Roteiro magnético em 10 blocos</strong><small>Escreva, formate e acrescente notas em cada etapa.</small></span></div>
             <span>{totalWords} palavras · aprox. {Math.max(0, Math.ceil(totalWords / 2.2))} segundos</span>
@@ -1293,65 +1409,123 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
           <div className="script-blocks">
             {scriptBlockDefinitions.map((definition) => {
               const block = scriptDocument.blocks[definition.id];
-              const noteOpen = openNotes[definition.id] ?? Boolean(block.note);
               return (
-                <section className={`script-block-card ${definition.id === "headline" ? "featured" : ""} ${definition.id === "caption" ? "caption-block" : ""}`} key={definition.id}>
-                  <div className="script-block-header">
-                    <div className="script-block-identity">
-                      <span className="number-badge">{definition.number}</span>
-                      <span><strong>{definition.id === "caption" ? definition.title : `BLOCO ${definition.number} · ${definition.title}`}</strong><small>{definition.helper}</small></span>
-                    </div>
-                    <div className="script-block-tools" aria-label={`Formatação do bloco ${definition.number}`}>
-                      <button
-                        className={`format-tool ${block.bold ? "active" : ""}`}
-                        aria-label={block.bold ? "Remover negrito" : "Deixar bloco em negrito"}
-                        title={block.bold ? "Remover negrito" : "Negrito"}
-                        onClick={() => updateBlock(definition.id, { bold: !block.bold })}
-                      ><Bold size={16} /></button>
-                      <div className="font-colors" aria-label="Cor da fonte">
-                        <Palette size={16} />
-                        {scriptColorPresets.map((color) => (
-                          <button
-                            key={color}
-                            className={block.color.toLowerCase() === color.toLowerCase() ? "color-swatch active" : "color-swatch"}
-                            style={{ backgroundColor: color }}
-                            aria-label={`Usar cor ${color}`}
-                            title={`Cor ${color}`}
-                            onClick={() => updateBlock(definition.id, { color })}
-                          />
-                        ))}
-                        <label className="custom-color" title="Escolher outra cor">
-                          <input type="color" value={block.color} aria-label="Escolher outra cor da fonte" onChange={(event) => updateBlock(definition.id, { color: event.target.value })} />
-                        </label>
-                      </div>
-                      <button
-                        className={`format-tool note-tool ${noteOpen ? "active" : ""}`}
-                        aria-label={noteOpen ? "Ocultar nota do bloco" : "Adicionar nota ao bloco"}
-                        title={noteOpen ? "Ocultar nota" : "Adicionar nota"}
-                        onClick={() => setOpenNotes((notes) => ({ ...notes, [definition.id]: !noteOpen }))}
-                      ><StickyNote size={16} /></button>
-                    </div>
-                  </div>
-                  <textarea
-                    className="script-block-textarea"
-                    rows={definition.rows}
-                    value={block.text}
-                    style={{ color: block.color, fontWeight: block.bold ? 750 : 400 }}
-                    onChange={(event) => updateBlock(definition.id, { text: event.target.value })}
-                    placeholder={definition.placeholder}
-                  />
-                  {noteOpen && (
-                    <div className="block-note">
-                      <StickyNote size={16} />
-                      <textarea rows={2} value={block.note} onChange={(event) => updateBlock(definition.id, { note: event.target.value })} placeholder="Adicione uma nota de gravação, cena, corte ou referência..." />
-                    </div>
-                  )}
-                </section>
+                <RichTextScriptBlock
+                  key={`${selected.id}:${definition.id}`}
+                  definition={definition}
+                  block={block}
+                  onChange={(patch) => updateBlock(definition.id, patch)}
+                />
               );
             })}
           </div>
         </div>
       </article>
+    </section>
+  );
+}
+
+function RichTextScriptBlock({ definition, block, onChange }: { definition: ScriptBlockDefinition; block: ScriptBlock; onChange: (patch: Partial<ScriptBlock>) => void }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [noteOpen, setNoteOpen] = useState(Boolean(block.note));
+  const safeHtml = useMemo(() => sanitizeRichTextHtml(block.html), [block.html]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || document.activeElement === editor || editor.innerHTML === safeHtml) return;
+    editor.innerHTML = safeHtml;
+  }, [safeHtml]);
+
+  function commitEditor() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const html = sanitizeRichTextHtml(editor.innerHTML);
+    if (editor.innerHTML !== html) editor.innerHTML = html;
+    if (html !== safeHtml) onChange({ html });
+  }
+
+  function toggleBold() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (document.activeElement !== editor) editor.focus();
+    document.execCommand("bold", false);
+    commitEditor();
+  }
+
+  function handleEditorKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      toggleBold();
+    }
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const plainText = event.clipboardData.getData("text/plain");
+    document.execCommand("insertHTML", false, plainTextToRichHtml(plainText));
+    commitEditor();
+  }
+
+  return (
+    <section className={`script-block-card ${definition.id === "headline" ? "featured" : ""} ${definition.id === "caption" ? "caption-block" : ""}`}>
+      <div className="script-block-header">
+        <div className="script-block-identity">
+          <span className="number-badge">{definition.number}</span>
+          <span><strong>{definition.id === "caption" ? definition.title : `BLOCO ${definition.number} · ${definition.title}`}</strong><small>{definition.helper}</small></span>
+        </div>
+        <div className="script-block-tools" aria-label={`Formatação do bloco ${definition.number}`}>
+          <button
+            className="format-tool"
+            aria-label="Aplicar ou remover negrito na seleção"
+            title="Negrito na seleção (Ctrl/Cmd+B)"
+            onClick={toggleBold}
+            onMouseDown={(event) => event.preventDefault()}
+          ><Bold size={16} /></button>
+          <div className="font-colors" aria-label="Cor da fonte">
+            <Palette size={16} />
+            {scriptColorPresets.map((color) => (
+              <button
+                key={color}
+                className={block.color.toLowerCase() === color.toLowerCase() ? "color-swatch active" : "color-swatch"}
+                style={{ backgroundColor: color }}
+                aria-label={`Usar cor ${color}`}
+                title={`Cor ${color}`}
+                onClick={() => onChange({ color })}
+              />
+            ))}
+            <label className="custom-color" title="Escolher outra cor">
+              <input type="color" value={block.color} aria-label="Escolher outra cor da fonte" onChange={(event) => onChange({ color: event.target.value })} />
+            </label>
+          </div>
+          <button
+            className={`format-tool note-tool ${noteOpen ? "active" : ""}`}
+            aria-label={noteOpen ? "Ocultar nota do bloco" : "Adicionar nota ao bloco"}
+            title={noteOpen ? "Ocultar nota" : "Adicionar nota"}
+            onClick={() => setNoteOpen((open) => !open)}
+          ><StickyNote size={16} /></button>
+        </div>
+      </div>
+      <div
+        ref={editorRef}
+        className="script-block-editor"
+        contentEditable
+        role="textbox"
+        aria-label={`Texto do bloco ${definition.number} · ${definition.title}`}
+        aria-multiline="true"
+        data-placeholder={definition.placeholder}
+        suppressContentEditableWarning
+        style={{ color: block.color, minHeight: `${Math.max(104, definition.rows * 27)}px` }}
+        onInput={commitEditor}
+        onBlur={commitEditor}
+        onKeyDown={handleEditorKeyDown}
+        onPaste={handlePaste}
+      />
+      {noteOpen && (
+        <div className="block-note">
+          <StickyNote size={16} />
+          <textarea rows={2} value={block.note} onChange={(event) => onChange({ note: event.target.value })} placeholder="Adicione uma nota de gravação, cena, corte ou referência..." />
+        </div>
+      )}
     </section>
   );
 }

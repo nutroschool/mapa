@@ -50,9 +50,19 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /JSON\.stringify\(nextDocument\)/);
   assert.match(page, /sidebar-is-collapsed/);
   assert.match(page, /library-is-collapsed/);
-  assert.match(page, /Deixar bloco em negrito/);
+  assert.match(page, /contentEditable/);
+  assert.match(page, /event\.metaKey \|\| event\.ctrlKey/);
+  assert.match(page, /Aplicar ou remover negrito na seleção/);
+  assert.match(page, /sanitizeRichTextHtml/);
   assert.match(page, /Escolher outra cor da fonte/);
   assert.match(page, /Adicionar nota ao bloco/);
+  assert.match(page, /Etapa de funil/);
+  assert.match(page, /Topo de funil/);
+  assert.match(page, /Meio de funil/);
+  assert.match(page, /Fundo de funil/);
+  assert.match(page, /draggable/);
+  assert.match(page, /onDrop=/);
+  assert.match(page, /scheduled_date: date/);
 
   const buttonTags = page.match(/<button\b[\s\S]*?>/g) ?? [];
   assert.ok(buttonTags.length > 20);
@@ -111,6 +121,10 @@ test("implements real Instagram OAuth and keeps Meta tokens server-side", async 
   assert.match(edgeFunction, /route === "deauthorize"/);
   assert.match(edgeFunction, /route === "data-deletion"/);
   assert.match(edgeFunction, /handlePrivacyPage/);
+  assert.match(edgeFunction, /token_exchange/);
+  assert.match(edgeFunction, /profile_fetch/);
+  assert.match(edgeFunction, /safeDiagnostic/);
+  assert.match(edgeFunction, /instagram=error&reason=callback_failed/);
   assert.match(migration, /enable row level security/gi);
   assert.match(migration, /revoke all.+anon, authenticated/is);
   assert.match(migration, /grant select, insert, update, delete.+service_role/is);

@@ -325,6 +325,22 @@ async function metaJson(url: string, accessToken?: string, init?: RequestInit) {
   return payload;
 }
 
+function safeDiagnostic(value: unknown) {
+  const message = value instanceof Error ? value.message : String(value || "unexpected_error");
+  return message
+    .replace(/([?&](?:code|access_token|client_secret)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .slice(0, 600);
+}
+
+async function atStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
+  try {
+    return await task();
+  } catch (error) {
+    throw new Error(`${stage}:${safeDiagnostic(error)}`);
+  }
+}
+
 async function handleStart(req: Request, body: JsonRecord) {
   const user = await authenticatedUser(req);
   if (!user) return json({ error: "Faça login novamente para conectar o Instagram." }, 401, req);
@@ -398,11 +414,11 @@ async function handleCallback(req: Request) {
     redirect_uri: callbackUrl(),
     code,
   });
-  const shortToken = await metaJson(instagramTokenUrl, undefined, {
+  const shortToken = await atStage("token_exchange", () => metaJson(instagramTokenUrl, undefined, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: tokenForm,
-  });
+  }));
   const shortAccessToken = String(shortToken.access_token || "");
   const instagramUserId = String(shortToken.user_id || "");
   if (!shortAccessToken || !instagramUserId) throw new Error("meta_api:invalid_token_response");
@@ -411,7 +427,7 @@ async function handleCallback(req: Request) {
   longTokenUrl.searchParams.set("grant_type", "ig_exchange_token");
   longTokenUrl.searchParams.set("client_secret", requireEnv("META_INSTAGRAM_APP_SECRET"));
   longTokenUrl.searchParams.set("access_token", shortAccessToken);
-  const longToken = await metaJson(longTokenUrl.toString());
+  const longToken = await atStage("long_token_exchange", () => metaJson(longTokenUrl.toString()));
   const accessToken = String(longToken.access_token || shortAccessToken);
   const expiresIn = Number(longToken.expires_in || 3600);
 
@@ -420,20 +436,22 @@ async function handleCallback(req: Request) {
     "fields",
     "id,user_id,username,account_type,profile_picture_url,followers_count,media_count",
   );
-  const profile = await metaJson(profileUrl.toString(), accessToken);
+  const profile = await atStage("profile_fetch", () => metaJson(profileUrl.toString(), accessToken));
 
-  const { error: connectionError } = await admin.from("instagram_connections").upsert({
-    user_id: oauthState.user_id,
-    instagram_user_id: instagramUserId,
-    username: String(profile.username || "Instagram"),
-    account_type: profile.account_type ? String(profile.account_type) : null,
-    profile_picture_url: profile.profile_picture_url ? String(profile.profile_picture_url) : null,
-    access_token_ciphertext: await encryptToken(accessToken),
-    granted_scopes: allowedScopes,
-    token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
-    last_synced_at: new Date().toISOString(),
-  }, { onConflict: "user_id" });
-  if (connectionError) throw connectionError;
+  await atStage("connection_save", async () => {
+    const { error: connectionError } = await admin.from("instagram_connections").upsert({
+      user_id: oauthState.user_id,
+      instagram_user_id: instagramUserId,
+      username: String(profile.username || "Instagram"),
+      account_type: profile.account_type ? String(profile.account_type) : null,
+      profile_picture_url: profile.profile_picture_url ? String(profile.profile_picture_url) : null,
+      access_token_ciphertext: await encryptToken(accessToken),
+      granted_scopes: allowedScopes,
+      token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      last_synced_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    if (connectionError) throw connectionError;
+  });
 
   const separator = oauthState.redirect_to.includes("?") ? "&" : "?";
   return Response.redirect(
@@ -641,8 +659,9 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders(req) });
   }
 
+  const route = new URL(req.url).pathname.split("/").filter(Boolean).at(-1) || "";
+
   try {
-    const route = new URL(req.url).pathname.split("/").filter(Boolean).at(-1) || "";
 
     if (req.method === "GET" && route === "privacy") return handlePrivacyPage();
     if (req.method === "GET" && route === "terms") return handleTermsPage();
@@ -671,7 +690,10 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro inesperado";
     const missingEnv = message.startsWith("missing_env:");
-    console.error("instagram-integration", missingEnv ? message : "request_failed");
+    console.error("instagram-integration", safeDiagnostic(message));
+    if (req.method === "GET" && route === "callback") {
+      return Response.redirect(appRedirect("/?view=desempenho&instagram=error&reason=callback_failed"), 302);
+    }
     return json({
       error: missingEnv
         ? "A integração está pronta no MAPA, mas falta concluir a configuração do aplicativo na Meta."
