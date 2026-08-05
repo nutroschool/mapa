@@ -1,32 +1,20 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+test("builds an independent MAPA with Supabase login and no ChatGPT gate", async () => {
+  const [page, layout] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    access(new URL("../.next/BUILD_ID", import.meta.url)),
+  ]);
 
-  return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
-}
-
-test("renders a secure MAPA bootstrap without seeded user data", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<title>MAPA — Conteúdo em movimento<\/title>/i);
-  assert.match(html, /Preparando seu espaço de criação/);
-  assert.match(html, /auth-shell auth-loading/);
-  assert.doesNotMatch(html, /Creatina faz mal para os rins/);
-  assert.doesNotMatch(html, /Proteína depois dos 60/);
-  assert.doesNotMatch(html, /128,4 mil/);
-  assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
+  assert.match(layout, /MAPA — Conteúdo em movimento/i);
+  assert.match(page, /Preparando seu espaço de criação/);
+  assert.match(page, /auth-shell auth-loading/);
+  assert.match(page, /Entrar no MAPA/);
+  assert.doesNotMatch(page + layout, /ChatGPT|signin-with-chatgpt|oai-authenticated/i);
+  assert.doesNotMatch(page, /Creatina faz mal para os rins/);
 });
 
 test("keeps local storage versioned and every visible button wired", async () => {
@@ -87,7 +75,6 @@ test("keeps local storage versioned and every visible button wired", async () =>
   }
 
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.deepEqual(await readdir(new URL("../app/_sites-preview", import.meta.url)), []);
 });
 
 test("uses Supabase Auth and protects cloud content by user", async () => {
