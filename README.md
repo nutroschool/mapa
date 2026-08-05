@@ -48,9 +48,14 @@ Configuração:
    Instagram com Instagram Login.
 2. Cadastre como OAuth Redirect URI:
    https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/instagram-integration/callback
+   Cadastre também os endpoints oficiais de privacidade e remoção:
+   - desautorização: https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/instagram-integration/deauthorize
+   - exclusão: https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/instagram-integration/data-deletion
+   - política: https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/instagram-integration/privacy
+   - termos: https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/instagram-integration/terms
 3. No Supabase, configure os segredos listados em .env.example. Esses valores
    pertencem à Edge Function e nunca devem usar o prefixo NEXT_PUBLIC_.
-4. Aplique a migração 20260805013532_instagram_integration.sql e publique a
+4. Aplique as migrações de Instagram e publique a
    função instagram-integration com verificação JWT da plataforma desativada. A
    função valida o usuário explicitamente porque o callback OAuth é público.
 5. Durante o desenvolvimento, adicione a conta profissional como tester do

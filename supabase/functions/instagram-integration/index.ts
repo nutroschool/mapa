@@ -158,6 +158,157 @@ function callbackUrl() {
   return `${requireEnv("SUPABASE_URL")}/functions/v1/instagram-integration/callback`;
 }
 
+function functionUrl(path: string) {
+  return `${requireEnv("SUPABASE_URL")}/functions/v1/instagram-integration${path}`;
+}
+
+function base64UrlToBytes(value: string) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  return base64ToBytes(padded);
+}
+
+function constantTimeEqual(left: Uint8Array, right: Uint8Array) {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference === 0;
+}
+
+async function readMetaSignedRequest(req: Request) {
+  const contentType = req.headers.get("Content-Type") || "";
+  let signedRequest = "";
+
+  if (contentType.includes("application/json")) {
+    const body = await req.json().catch(() => ({})) as JsonRecord;
+    signedRequest = typeof body.signed_request === "string" ? body.signed_request : "";
+  } else {
+    const form = new URLSearchParams(await req.text());
+    signedRequest = form.get("signed_request") || "";
+  }
+
+  const [encodedSignature, encodedPayload] = signedRequest.split(".");
+  if (!encodedSignature || !encodedPayload) throw new Error("invalid_signed_request");
+
+  const hmacKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(requireEnv("META_INSTAGRAM_APP_SECRET")),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const expectedSignature = new Uint8Array(
+    await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(encodedPayload)),
+  );
+  const providedSignature = base64UrlToBytes(encodedSignature);
+  if (!constantTimeEqual(expectedSignature, providedSignature)) {
+    throw new Error("invalid_signed_request_signature");
+  }
+
+  const payload = JSON.parse(
+    new TextDecoder().decode(base64UrlToBytes(encodedPayload)),
+  ) as JsonRecord;
+  if (String(payload.algorithm || "").toUpperCase() !== "HMAC-SHA256") {
+    throw new Error("invalid_signed_request_algorithm");
+  }
+  const instagramUserId = String(payload.user_id || "");
+  if (!/^\d{1,64}$/.test(instagramUserId)) throw new Error("invalid_instagram_user_id");
+  return { instagramUserId };
+}
+
+function textPage(title: string, paragraphs: string[], status = 200) {
+  return new Response([title, ...paragraphs].join("\n\n"), {
+    status,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+function handlePrivacyPage() {
+  return textPage("Política de Privacidade do MAPA", [
+    "O MAPA acessa apenas os dados que o usuário autoriza em sua conta profissional do Instagram: identificação da conta, nome de usuário, informações públicas do perfil, conteúdos publicados e métricas de desempenho.",
+    "Esses dados são usados somente para exibir análises de conteúdo ao próprio usuário. O token de acesso é criptografado no servidor, não é mostrado no navegador e não é vendido nem compartilhado para publicidade.",
+    "O usuário pode desconectar o Instagram dentro do MAPA a qualquer momento. Também pode solicitar a exclusão pela Meta; a conexão, o token e os dados associados são removidos do MAPA.",
+    "Dúvidas sobre privacidade: nutroschool@gmail.com.",
+  ]);
+}
+
+function handleTermsPage() {
+  return textPage("Termos de Uso do MAPA", [
+    "O MAPA é uma ferramenta de organização e análise de conteúdo. O usuário continua responsável pela conta do Instagram, pelos conteúdos publicados e pelo cumprimento das regras da Meta.",
+    "As métricas dependem da disponibilidade e das limitações da API oficial do Instagram. O serviço pode sofrer alterações ou indisponibilidades quando a Meta modificar suas APIs.",
+    "O acesso à integração pode ser revogado pelo usuário a qualquer momento, sem transferir a propriedade da conta ou do conteúdo ao MAPA.",
+  ]);
+}
+
+async function handleDeauthorize(req: Request) {
+  const { instagramUserId } = await readMetaSignedRequest(req);
+  const { error } = await adminClient()
+    .from("instagram_connections")
+    .delete()
+    .eq("instagram_user_id", instagramUserId);
+  if (error) throw error;
+  return json({ success: true }, 200, req);
+}
+
+async function handleDataDeletion(req: Request) {
+  const { instagramUserId } = await readMetaSignedRequest(req);
+  const admin = adminClient();
+  const { error: deleteError } = await admin
+    .from("instagram_connections")
+    .delete()
+    .eq("instagram_user_id", instagramUserId);
+  if (deleteError) throw deleteError;
+
+  const confirmationCode = randomHex(16);
+  const { error: requestError } = await admin.from("instagram_data_deletion_requests").insert({
+    confirmation_code: confirmationCode,
+    instagram_user_id_hash: await sha256Hex(instagramUserId),
+    status: "completed",
+    completed_at: new Date().toISOString(),
+  });
+  if (requestError) throw requestError;
+
+  const statusUrl = new URL(functionUrl("/data-deletion-status"));
+  statusUrl.searchParams.set("code", confirmationCode);
+  return json({
+    url: statusUrl.toString(),
+    confirmation_code: confirmationCode,
+  }, 200, req);
+}
+
+async function handleDataDeletionStatus(req: Request) {
+  const code = new URL(req.url).searchParams.get("code") || "";
+  if (!/^[a-f0-9]{32}$/.test(code)) {
+    return textPage("Solicitação de exclusão não encontrada", [
+      "O código informado é inválido. Solicite novamente a exclusão pelo Instagram.",
+    ], 404);
+  }
+  const { data, error } = await adminClient()
+    .from("instagram_data_deletion_requests")
+    .select("status,completed_at")
+    .eq("confirmation_code", code)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    return textPage("Solicitação de exclusão não encontrada", [
+      "Não encontramos uma solicitação de exclusão com esse código.",
+    ], 404);
+  }
+  const completedAt = new Date(data.completed_at).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  });
+  return textPage("Dados excluídos do MAPA", [
+    `A conexão com o Instagram e os dados associados foram removidos do MAPA em ${completedAt}.`,
+    `Código de confirmação: ${code}.`,
+  ]);
+}
+
 async function metaJson(url: string, accessToken?: string, init?: RequestInit) {
   const response = await fetch(url, {
     ...init,
@@ -492,8 +643,18 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const route = new URL(req.url).pathname.split("/").filter(Boolean).at(-1) || "";
+
+    if (req.method === "GET" && route === "privacy") return handlePrivacyPage();
+    if (req.method === "GET" && route === "terms") return handleTermsPage();
+    if (req.method === "GET" && route === "data-deletion-status") {
+      return await handleDataDeletionStatus(req);
+    }
     if (req.method === "GET") return await handleCallback(req);
     if (req.method !== "POST") return json({ error: "Método não permitido." }, 405, req);
+
+    if (route === "deauthorize") return await handleDeauthorize(req);
+    if (route === "data-deletion") return await handleDataDeletion(req);
 
     const body = await req.json().catch(() => ({})) as JsonRecord;
     switch (body.action) {

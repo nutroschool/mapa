@@ -304,39 +304,44 @@ function Workspace({ user }: { user: User | null }) {
   }, [user]);
 
   useEffect(() => {
+    let frame = 0;
     if (!user || !supabase) {
-      setInstagramState("disconnected");
-      return;
+      frame = window.requestAnimationFrame(() => setInstagramState("disconnected"));
+    } else {
+      frame = window.requestAnimationFrame(() => void loadInstagramStatus());
     }
-    void loadInstagramStatus();
+    return () => window.cancelAnimationFrame(frame);
   }, [loadInstagramStatus, user]);
 
   useEffect(() => {
     if (!user) return;
-    const params = new URLSearchParams(window.location.search);
-    const result = params.get("instagram");
-    if (!result) return;
+    const frame = window.requestAnimationFrame(() => {
+      const params = new URLSearchParams(window.location.search);
+      const result = params.get("instagram");
+      if (!result) return;
 
-    params.delete("instagram");
-    params.delete("reason");
-    const query = params.toString();
-    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-    setView("desempenho");
+      params.delete("instagram");
+      params.delete("reason");
+      const query = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      setView("desempenho");
 
-    if (result === "connected") {
-      window.localStorage.removeItem(instagramDemoKey);
-      setInstagramDemo(false);
-      setToast("Instagram conectado com segurança.");
-      void loadInstagramStatus();
-      return;
-    }
-    if (result === "cancelled") {
-      setToast("Conexão com o Instagram cancelada.");
-      return;
-    }
-    setInstagramState("error");
-    setInstagramError("A Meta não concluiu a autorização. Tente novamente.");
-    setToast("Não foi possível conectar o Instagram.");
+      if (result === "connected") {
+        window.localStorage.removeItem(instagramDemoKey);
+        setInstagramDemo(false);
+        setToast("Instagram conectado com segurança.");
+        void loadInstagramStatus();
+        return;
+      }
+      if (result === "cancelled") {
+        setToast("Conexão com o Instagram cancelada.");
+        return;
+      }
+      setInstagramState("error");
+      setInstagramError("A Meta não concluiu a autorização. Tente novamente.");
+      setToast("Não foi possível conectar o Instagram.");
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [loadInstagramStatus, user]);
 
   useEffect(() => {
@@ -346,7 +351,8 @@ function Workspace({ user }: { user: User | null }) {
       && (!instagramMetrics || instagramMetrics.period_days !== instagramPeriod)
       && !instagramMetricsLoading
     ) {
-      void loadInstagramMetrics(instagramPeriod);
+      const frame = window.requestAnimationFrame(() => void loadInstagramMetrics(instagramPeriod));
+      return () => window.cancelAnimationFrame(frame);
     }
   }, [
     instagramMetrics,
