@@ -358,8 +358,7 @@ async function handleStart(req: Request, body: JsonRecord) {
   authorizationUrl.searchParams.set("response_type", "code");
   authorizationUrl.searchParams.set("scope", allowedScopes.join(","));
   authorizationUrl.searchParams.set("state", state);
-  authorizationUrl.searchParams.set("enable_fb_login", "0");
-  authorizationUrl.searchParams.set("force_authentication", "1");
+  authorizationUrl.searchParams.set("force_reauth", "true");
 
   return json({ authorization_url: authorizationUrl.toString() }, 200, req);
 }

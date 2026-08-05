@@ -91,6 +91,8 @@ test("implements real Instagram OAuth and keeps Meta tokens server-side", async 
   assert.match(edgeFunction, /instagram_business_basic/);
   assert.match(edgeFunction, /instagram_business_manage_insights/);
   assert.match(edgeFunction, /www\.instagram\.com\/oauth\/authorize/);
+  assert.match(edgeFunction, /force_reauth/);
+  assert.doesNotMatch(edgeFunction, /enable_fb_login|force_authentication/);
   assert.match(edgeFunction, /api\.instagram\.com\/oauth\/access_token/);
   assert.match(edgeFunction, /auth\.getUser\(accessToken\)/);
   assert.match(edgeFunction, /AES-GCM/);
