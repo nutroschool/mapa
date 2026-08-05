@@ -174,7 +174,7 @@ function parseScriptDocument(item: ContentItem): ScriptDocument {
     .map((value) => value.trim())
     .filter(Boolean)
     .join("\n\n");
-  const headingPattern = /(?:^|\n)\s*(?:BLOCO\s*([1-9])\s*[·.\-–—:]\s*(?:HEADLINE|INTENSIFICADOR\s+DE\s+MISTÉRIO|CTA\s+DE\s+SALVAMENTO|CONTEÚDO\s+NOTÁVEL(?:\s*[12])?|CTA\s+DE\s+COMPARTILHAMENTO|CRENÇA|APRESENTAÇÃO\s+E\s+CTAS\s+FINAIS)|(?:BLOCO\s*10\s*[·.\-–—:]\s*)?CAPTION\s+PRONTA(?:\s+LEGENDA)?)\s*/gim;
+  const headingPattern = /(?:^|\n)\s*(?:BLOCO\s*([1-9])\s*[·.\-–—:]\s*(?:HEADLINE|INTENSIFICADOR\s+DE\s+MISTÉRIO|CTA\s+DE\s+SALVAMENTO|CONTEÚDO\s+NOTÁVEL(?:\s*[123])?|CTA\s+DE\s+COMPARTILHAMENTO|CRENÇA|APRESENTAÇÃO\s+E\s+CTAS\s+FINAIS)|(?:BLOCO\s*10\s*[·.\-–—:]\s*)?CAPTION\s+PRONTA(?:\s+LEGENDA)?)\s*/gim;
   const headings = Array.from(legacyText.matchAll(headingPattern));
 
   if (headings.length) {
