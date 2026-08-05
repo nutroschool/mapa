@@ -668,6 +668,19 @@ body { font-size: 16px; }
 .workspace-summary small { color: #8c919d; font-size: 12px; }
 .button.danger { color: #a64d43; border-color: #efd0cc; background: #fff7f5; }
 .sync-state.demo > span { background: var(--amber); box-shadow: 0 0 0 3px #fff0d2; }
+.sync-state.live > span { background: #3aa66e; box-shadow: 0 0 0 3px #dff4e8; }
+.button:disabled { opacity: .62; cursor: wait; transform: none; box-shadow: none; }
+.integration-feedback { border-color: #efd6b2; color: #765326; background: #fff9ef; }
+.connected-instagram-banner { min-height: 104px; margin-bottom: 15px; padding: 18px 21px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 15px; }
+.connected-instagram-banner h2 { margin: 4px 0 2px; font: 800 22px/1.15 var(--font-display); letter-spacing: -.03em; }
+.connected-instagram-banner p { margin: 0; color: #858a97; font-size: 12px; }
+.instagram-account-avatar { width: 58px; height: 58px; border-radius: 17px; display: grid; place-items: center; overflow: hidden; color: white; background: linear-gradient(135deg,#7a5bd5,#cf478d,#ee7142); }
+.integration-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #7c8392; text-align: center; }
+.integration-loading svg { color: #8ca32e; }
+.integration-loading h2 { margin: 13px 0 4px; color: var(--ink); font: 800 21px var(--font-display); }
+.integration-loading p { margin: 0; font-size: 13px; }
+.chart-empty { min-height: 190px; display: grid; place-items: center; color: #9095a0; font-size: 13px; text-align: center; }
+.ranking-empty { min-height: 120px; }
 
 @media (max-width: 600px) {
   .toolbar-actions { gap: 5px; }
@@ -675,6 +688,8 @@ body { font-size: 16px; }
   .help-steps { grid-template-columns: 1fr; }
   .help-steps > div { min-height: 0; }
   .empty-workspace, .empty-analytics { min-height: 360px; padding-inline: 20px; }
+  .connected-instagram-banner { grid-template-columns: auto 1fr; }
+  .connected-instagram-banner .button { grid-column: 1 / -1; width: 100%; }
 }
 
 /* Authentication -------------------------------------------------------- */

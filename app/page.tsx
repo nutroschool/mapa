@@ -46,7 +46,14 @@ import {
   Zap,
 } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  invokeInstagram,
+  type InstagramAccount,
+  type InstagramConnectionState,
+  type InstagramMetrics,
+} from "@/lib/instagram";
+import InstagramPerformance from "@/components/InstagramPerformance";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type View = "hoje" | "calendario" | "roteiros" | "desempenho";
@@ -180,6 +187,12 @@ function Workspace({ user }: { user: User | null }) {
   const [addOpen, setAddOpen] = useState(false);
   const [instagramOpen, setInstagramOpen] = useState(false);
   const [instagramDemo, setInstagramDemo] = useState(false);
+  const [instagramState, setInstagramState] = useState<InstagramConnectionState>("checking");
+  const [instagramAccount, setInstagramAccount] = useState<InstagramAccount | null>(null);
+  const [instagramMetrics, setInstagramMetrics] = useState<InstagramMetrics | null>(null);
+  const [instagramPeriod, setInstagramPeriod] = useState<30 | 90>(30);
+  const [instagramMetricsLoading, setInstagramMetricsLoading] = useState(false);
+  const [instagramError, setInstagramError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [utilityModal, setUtilityModal] = useState<"help" | "notifications" | "profile" | null>(null);
   const [toast, setToast] = useState("");
@@ -193,6 +206,50 @@ function Workspace({ user }: { user: User | null }) {
     date: todayIso,
     status: "Ideia" as Status,
   });
+
+  const loadInstagramMetrics = useCallback(async (periodDays: 30 | 90) => {
+    setInstagramMetricsLoading(true);
+    setInstagramError("");
+    try {
+      const metrics = await invokeInstagram<InstagramMetrics>({
+        action: "metrics",
+        period_days: periodDays,
+      });
+      setInstagramMetrics(metrics);
+      setInstagramAccount(metrics.account);
+      setInstagramState("connected");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível carregar as métricas.";
+      setInstagramError(message);
+      if (message.includes("expirou") || message.includes("não conectado")) {
+        setInstagramState("disconnected");
+        setInstagramAccount(null);
+      }
+    } finally {
+      setInstagramMetricsLoading(false);
+    }
+  }, []);
+
+  const loadInstagramStatus = useCallback(async () => {
+    setInstagramState("checking");
+    try {
+      const status = await invokeInstagram<{
+        connected: boolean;
+        account?: InstagramAccount;
+      }>({ action: "status" });
+      if (!status.connected || !status.account) {
+        setInstagramState("disconnected");
+        setInstagramAccount(null);
+        setInstagramMetrics(null);
+        return;
+      }
+      setInstagramState("connected");
+      setInstagramAccount(status.account);
+    } catch (error) {
+      setInstagramState("error");
+      setInstagramError(error instanceof Error ? error.message : "Não foi possível verificar o Instagram.");
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -245,6 +302,60 @@ function Workspace({ user }: { user: User | null }) {
       Object.values(saveTimers).forEach((timer) => window.clearTimeout(timer));
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !supabase) {
+      setInstagramState("disconnected");
+      return;
+    }
+    void loadInstagramStatus();
+  }, [loadInstagramStatus, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("instagram");
+    if (!result) return;
+
+    params.delete("instagram");
+    params.delete("reason");
+    const query = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+    setView("desempenho");
+
+    if (result === "connected") {
+      window.localStorage.removeItem(instagramDemoKey);
+      setInstagramDemo(false);
+      setToast("Instagram conectado com segurança.");
+      void loadInstagramStatus();
+      return;
+    }
+    if (result === "cancelled") {
+      setToast("Conexão com o Instagram cancelada.");
+      return;
+    }
+    setInstagramState("error");
+    setInstagramError("A Meta não concluiu a autorização. Tente novamente.");
+    setToast("Não foi possível conectar o Instagram.");
+  }, [loadInstagramStatus, user]);
+
+  useEffect(() => {
+    if (
+      view === "desempenho"
+      && instagramState === "connected"
+      && (!instagramMetrics || instagramMetrics.period_days !== instagramPeriod)
+      && !instagramMetricsLoading
+    ) {
+      void loadInstagramMetrics(instagramPeriod);
+    }
+  }, [
+    instagramMetrics,
+    instagramMetricsLoading,
+    instagramPeriod,
+    instagramState,
+    loadInstagramMetrics,
+    view,
+  ]);
 
   useEffect(() => {
     if (ready && !user) window.localStorage.setItem(storageKey, JSON.stringify(contents));
@@ -370,6 +481,38 @@ function Workspace({ user }: { user: User | null }) {
     setInstagramDemo(true);
     setInstagramOpen(false);
     announce("Modo demonstração ativado no painel.");
+  }
+
+  async function connectInstagram() {
+    if (instagramState === "connecting") return;
+    setInstagramState("connecting");
+    setInstagramError("");
+    try {
+      const data = await invokeInstagram<{ authorization_url: string }>({
+        action: "start",
+        return_to: "/?view=desempenho",
+      });
+      window.location.assign(data.authorization_url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível iniciar a conexão.";
+      setInstagramState("error");
+      setInstagramError(message);
+      announce(message);
+    }
+  }
+
+  async function disconnectInstagram() {
+    if (!window.confirm("Desconectar esta conta do Instagram? Os conteúdos do MAPA não serão apagados.")) return;
+    try {
+      await invokeInstagram<{ connected: false }>({ action: "disconnect" });
+      setInstagramState("disconnected");
+      setInstagramAccount(null);
+      setInstagramMetrics(null);
+      setInstagramOpen(false);
+      announce("Instagram desconectado.");
+    } catch (error) {
+      announce(error instanceof Error ? error.message : "Não foi possível desconectar o Instagram.");
+    }
   }
 
   function disableInstagramDemo() {
@@ -555,8 +698,12 @@ function Workspace({ user }: { user: User | null }) {
               <p>{titles[view].subtitle}</p>
             </div>
             {view === "desempenho" && (
-              <button className={`button ${instagramDemo ? "connected" : "secondary"}`} onClick={() => setInstagramOpen(true)}>
-                <Instagram size={18} /> {instagramDemo ? "Instagram demonstrativo" : "Configurar Instagram"}
+              <button className={`button ${instagramState === "connected" || instagramDemo ? "connected" : "secondary"}`} onClick={() => setInstagramOpen(true)}>
+                <Instagram size={18} /> {instagramState === "connected" && instagramAccount
+                  ? `@${instagramAccount.username}`
+                  : instagramDemo
+                    ? "Instagram demonstrativo"
+                    : "Configurar Instagram"}
               </button>
             )}
           </section>
@@ -588,7 +735,14 @@ function Workspace({ user }: { user: User | null }) {
           {view === "desempenho" && (
             <PerformanceView
               demo={instagramDemo}
+              connectionState={instagramState}
+              account={instagramAccount}
+              metrics={instagramMetrics}
+              metricsLoading={instagramMetricsLoading}
+              period={instagramPeriod}
               onConnect={() => setInstagramOpen(true)}
+              onPeriodChange={setInstagramPeriod}
+              onRefresh={() => void loadInstagramMetrics(instagramPeriod)}
               onDisableDemo={disableInstagramDemo}
               onCreateFromInsight={createFromInsight}
               onNotify={announce}
@@ -630,15 +784,34 @@ function Workspace({ user }: { user: User | null }) {
           <div className="instagram-modal">
             <div className="modal-icon instagram"><Instagram size={24} /></div>
             <span className="eyebrow">INTEGRAÇÃO OFICIAL</span>
-            <h2>Conectar Instagram Profissional</h2>
-            <p>O MAPA poderá importar seus Reels e transformar alcance, retenção e engajamento em decisões para a próxima pauta.</p>
+            <h2>{instagramState === "connected" && instagramAccount
+              ? `@${instagramAccount.username} está conectado`
+              : "Conectar Instagram Profissional"}</h2>
+            <p>{instagramState === "connected"
+              ? "O MAPA pode importar as métricas autorizadas dessa conta. Sua senha nunca passa pelo aplicativo."
+              : "O MAPA importará seus conteúdos e transformará alcance, visualizações e engajamento em decisões para a próxima pauta."}</p>
             <div className="connection-steps">
               <div><span>1</span><p><strong>Conta profissional</strong><small>O perfil precisa ser Criador ou Empresa.</small></p><Check size={18} /></div>
               <div><span>2</span><p><strong>Autorização segura</strong><small>O login acontece pela Meta. Sua senha não passa pelo MAPA.</small></p><Link2 size={18} /></div>
               <div><span>3</span><p><strong>Sincronização de insights</strong><small>O painel organiza as métricas disponíveis pela API oficial.</small></p><BarChart3 size={18} /></div>
             </div>
-            <div className="info-note"><Lightbulb size={19} /><p><strong>Nesta primeira versão:</strong> use dados de demonstração. Para conectar sua conta real, será necessário cadastrar o MAPA na Meta e autorizar as permissões de insights.</p></div>
-            <div className="modal-actions stacked-mobile"><button className="button ghost" onClick={() => setInstagramOpen(false)}>Agora não</button><button className="button instagram-button" onClick={enableInstagramDemo}><Instagram size={18} /> Explorar com dados de demonstração</button></div>
+            {instagramError && <div className="info-note integration-feedback"><Lightbulb size={19} /><p><strong>Atenção:</strong> {instagramError}</p></div>}
+            <div className="info-note"><LockKeyhole size={19} /><p><strong>Privacidade:</strong> o token de acesso é criptografado e fica somente no servidor. O MAPA solicita apenas perfil, conteúdos e insights.</p></div>
+            <div className="modal-actions stacked-mobile instagram-actions">
+              {instagramState === "connected"
+                ? <>
+                    <button className="button ghost danger" onClick={() => void disconnectInstagram()}>Desconectar</button>
+                    <button className="button primary" onClick={() => { setInstagramOpen(false); setView("desempenho"); }}><BarChart3 size={18} /> Ver métricas</button>
+                  </>
+                : <>
+                    <button className="button ghost" onClick={enableInstagramDemo}>Explorar demonstração</button>
+                    <button className="button instagram-button" disabled={instagramState === "connecting" || instagramState === "checking"} onClick={() => void connectInstagram()}>
+                      {instagramState === "connecting" || instagramState === "checking"
+                        ? <><LoaderCircle className="spin" size={18} /> Preparando...</>
+                        : <><Instagram size={18} /> Entrar com Instagram</>}
+                    </button>
+                  </>}
+            </div>
           </div>
         </Modal>
       )}
@@ -997,30 +1170,58 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
 
 function PerformanceView({
   demo,
+  connectionState,
+  account,
+  metrics,
+  metricsLoading,
+  period,
   onConnect,
+  onPeriodChange,
+  onRefresh,
   onDisableDemo,
   onCreateFromInsight,
   onNotify,
 }: {
   demo: boolean;
+  connectionState: InstagramConnectionState;
+  account: InstagramAccount | null;
+  metrics: InstagramMetrics | null;
+  metricsLoading: boolean;
+  period: 30 | 90;
   onConnect: () => void;
+  onPeriodChange: (period: 30 | 90) => void;
+  onRefresh: () => void;
   onDisableDemo: () => void;
   onCreateFromInsight: () => void;
   onNotify: (message: string) => void;
 }) {
-  type Period = "30" | "90" | "year";
-  const [period, setPeriod] = useState<Period>("30");
-  const datasets: Record<Period, { views: string; reach: string; engagement: string; followers: string; total: string; growth: string; bars: number[] }> = {
+  type DemoPeriod = "30" | "90" | "year";
+  const [demoPeriod, setDemoPeriod] = useState<DemoPeriod>("30");
+  const datasets: Record<DemoPeriod, { views: string; reach: string; engagement: string; followers: string; total: string; growth: string; bars: number[] }> = {
     "30": { views: "128,4 mil", reach: "74,8 mil", engagement: "6,8%", followers: "+1.284", total: "128.420", growth: "18,2%", bars: [38, 52, 45, 67, 58, 82, 72, 92, 76, 88, 66, 96] },
     "90": { views: "361,7 mil", reach: "205,2 mil", engagement: "6,1%", followers: "+3.506", total: "361.740", growth: "24,7%", bars: [32, 45, 41, 55, 63, 59, 70, 74, 68, 82, 88, 94] },
     year: { views: "1,2 mi", reach: "684 mil", engagement: "5,9%", followers: "+11.842", total: "1.204.870", growth: "31,4%", bars: [25, 31, 43, 39, 52, 61, 56, 68, 75, 79, 87, 98] },
   };
-  const data = datasets[period];
+  const data = datasets[demoPeriod];
   const ranking = [
     ["Proteína depois dos 60", "Reel · 01 ago", "42,8 mil", "71%", "3.842", "9,4"],
     ["Creatina: o mito dos rins", "Reel · 27 jul", "31,2 mil", "68%", "2.915", "9,1"],
     ["O que a balança não mostra", "Carrossel · 24 jul", "18,6 mil", "62%", "2.104", "8,7"],
   ];
+
+  if (connectionState === "connected") {
+    return (
+      <InstagramPerformance
+        account={account}
+        metrics={metrics}
+        loading={metricsLoading}
+        period={period}
+        onPeriodChange={onPeriodChange}
+        onRefresh={onRefresh}
+        onNotify={onNotify}
+      />
+    );
+  }
 
   function exportReport() {
     const rows = [["Conteúdo", "Formato/Data", "Visualizações", "Retenção", "Interações", "Nota MAPA"], ...ranking];
@@ -1028,7 +1229,7 @@ function PerformanceView({
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `mapa-relatorio-${period}.csv`;
+    link.download = `mapa-relatorio-${demoPeriod}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     onNotify("Relatório de demonstração exportado.");
@@ -1064,9 +1265,9 @@ function PerformanceView({
 
       <section className="analytics-head">
         <div className="period-tabs">
-          <button className={period === "30" ? "active" : ""} onClick={() => setPeriod("30")}>Últimos 30 dias</button>
-          <button className={period === "90" ? "active" : ""} onClick={() => setPeriod("90")}>90 dias</button>
-          <button className={period === "year" ? "active" : ""} onClick={() => setPeriod("year")}>Este ano</button>
+          <button className={demoPeriod === "30" ? "active" : ""} onClick={() => setDemoPeriod("30")}>Últimos 30 dias</button>
+          <button className={demoPeriod === "90" ? "active" : ""} onClick={() => setDemoPeriod("90")}>90 dias</button>
+          <button className={demoPeriod === "year" ? "active" : ""} onClick={() => setDemoPeriod("year")}>Este ano</button>
         </div>
         <span className="sync-state demo"><span /> Dados de demonstração</span>
       </section>
@@ -1079,7 +1280,7 @@ function PerformanceView({
 
       <section className="analytics-grid">
         <div className="panel chart-panel">
-          <PanelHeader eyebrow="EVOLUÇÃO" title="Visualizações por publicação" action="Ver detalhes" onAction={() => onNotify(`Período selecionado: ${period === "30" ? "últimos 30 dias" : period === "90" ? "90 dias" : "este ano"}.`)} />
+          <PanelHeader eyebrow="EVOLUÇÃO" title="Visualizações por publicação" action="Ver detalhes" onAction={() => onNotify(`Período selecionado: ${demoPeriod === "30" ? "últimos 30 dias" : demoPeriod === "90" ? "90 dias" : "este ano"}.`)} />
           <div className="chart-total"><strong>{data.total}</strong><span><TrendingUp size={14} /> {data.growth}</span><small>exemplo comparativo</small></div>
           <div className="bar-chart">{data.bars.map((height, index) => <div key={index} className={index === 11 ? "highlight" : ""}><span style={{ height: `${height}%` }} /><small>{index % 2 === 0 ? `${index + 1}` : ""}</small></div>)}</div>
         </div>

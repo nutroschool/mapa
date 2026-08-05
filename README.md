@@ -30,15 +30,44 @@ O ambiente publicado na Vercel usa Supabase Auth com e-mail/senha e a tabela
 Nunca use uma chave `service_role` ou `sb_secret_...` no navegador ou em uma
 variável com prefixo `NEXT_PUBLIC_`.
 
-Sem essas variáveis, o aplicativo mantém o modo local usado pela versão
-existente no Sites. Com as variáveis, a tela de login é obrigatória e os dados
-são sincronizados no Supabase.
+Sem essas variáveis, o aplicativo mantém um fallback local. Com as variáveis,
+a tela de login é obrigatória e os dados são sincronizados no Supabase.
+
+## Instagram profissional
+
+O botão “Entrar com Instagram” usa a Instagram API with Instagram Login. A
+integração aceita contas profissionais do tipo Empresa ou Criador; contas
+pessoais não disponibilizam insights pela API.
+
+O fluxo usa apenas as permissões instagram_business_basic e
+instagram_business_manage_insights.
+
+Configuração:
+
+1. Crie um aplicativo Business em Meta for Developers e adicione o produto
+   Instagram com Instagram Login.
+2. Cadastre como OAuth Redirect URI:
+   https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/instagram-integration/callback
+3. No Supabase, configure os segredos listados em .env.example. Esses valores
+   pertencem à Edge Function e nunca devem usar o prefixo NEXT_PUBLIC_.
+4. Aplique a migração 20260805013532_instagram_integration.sql e publique a
+   função instagram-integration com verificação JWT da plataforma desativada. A
+   função valida o usuário explicitamente porque o callback OAuth é público.
+5. Durante o desenvolvimento, adicione a conta profissional como tester do
+   aplicativo Meta. Para atender contas externas, solicite Advanced Access/App
+   Review.
+
+O estado OAuth expira em 10 minutos. O token fica criptografado no banco e as
+tabelas de integração não concedem acesso a anon nem authenticated. Insights de
+conta têm disponibilidade histórica limitada pela própria Meta; por isso o
+painel real oferece períodos de 30 e 90 dias.
 
 ## Vercel
 
 O arquivo `vercel.json` seleciona o framework Next.js e executa
 `npm run build:vercel`. Configure as duas variáveis públicas do Supabase nos
-ambientes Production e Preview antes da implantação.
+ambientes Production e Preview antes da implantação. Os segredos da Meta ficam
+no Supabase Edge Functions, não na Vercel.
 
 This starter does not use `wrangler.jsonc`.
 

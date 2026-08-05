@@ -74,3 +74,29 @@ test("uses Supabase Auth and protects cloud content by user", async () => {
   assert.match(migration, /for (select|insert|update|delete)/i);
   assert.equal(JSON.parse(vercel).framework, "nextjs");
 });
+
+test("implements real Instagram OAuth and keeps Meta tokens server-side", async () => {
+  const [page, instagramClient, edgeFunction, migration, envExample] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/instagram.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/functions/instagram-integration/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260805013532_instagram_integration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../.env.example", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /connectInstagram/);
+  assert.match(page, /Entrar com Instagram/);
+  assert.match(instagramClient, /functions\.invoke\("instagram-integration"/);
+  assert.match(edgeFunction, /instagram_business_basic/);
+  assert.match(edgeFunction, /instagram_business_manage_insights/);
+  assert.match(edgeFunction, /www\.instagram\.com\/oauth\/authorize/);
+  assert.match(edgeFunction, /api\.instagram\.com\/oauth\/access_token/);
+  assert.match(edgeFunction, /auth\.getUser\(accessToken\)/);
+  assert.match(edgeFunction, /AES-GCM/);
+  assert.match(edgeFunction, /stateHash = await sha256Hex/);
+  assert.match(migration, /enable row level security/gi);
+  assert.match(migration, /revoke all.+anon, authenticated/is);
+  assert.match(migration, /grant select, insert, update, delete.+service_role/is);
+  assert.doesNotMatch(page + instagramClient, /META_INSTAGRAM_APP_SECRET|INSTAGRAM_TOKEN_ENCRYPTION_KEY/);
+  assert.doesNotMatch(envExample, /META_INSTAGRAM_APP_SECRET=\S{20,}/);
+});
