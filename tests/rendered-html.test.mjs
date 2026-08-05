@@ -14,16 +14,15 @@ async function render() {
   );
 }
 
-test("renders a clean MAPA workspace without seeded user data", async () => {
+test("renders a secure MAPA bootstrap without seeded user data", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<title>MAPA — Conteúdo em movimento<\/title>/i);
-  assert.match(html, /Seu MAPA começa aqui/);
-  assert.match(html, /O espaço está zerado/);
-  assert.match(html, /Novo conteúdo/);
+  assert.match(html, /Preparando seu espaço de criação/);
+  assert.match(html, /auth-shell auth-loading/);
   assert.doesNotMatch(html, /Creatina faz mal para os rins/);
   assert.doesNotMatch(html, /Proteína depois dos 60/);
   assert.doesNotMatch(html, /128,4 mil/);
@@ -53,4 +52,25 @@ test("keeps local storage versioned and every visible button wired", async () =>
 
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.deepEqual(await readdir(new URL("../app/_sites-preview", import.meta.url)), []);
+});
+
+test("uses Supabase Auth and protects cloud content by user", async () => {
+  const [page, client, migration, vercel, envExample] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/supabase.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/202608040001_create_content_items.sql", import.meta.url), "utf8"),
+    readFile(new URL("../vercel.json", import.meta.url), "utf8"),
+    readFile(new URL("../.env.example", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /signInWithPassword/);
+  assert.match(page, /auth\.signUp/);
+  assert.match(page, /from\("content_items"\)/);
+  assert.match(page, /crypto\.randomUUID\(\)/);
+  assert.match(client, /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
+  assert.doesNotMatch(client + envExample, /service_role|sb_secret_/);
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /auth\.uid\(\).*user_id/is);
+  assert.match(migration, /for (select|insert|update|delete)/i);
+  assert.equal(JSON.parse(vercel).framework, "nextjs");
 });

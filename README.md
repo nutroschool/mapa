@@ -1,8 +1,7 @@
-# vinext-starter
+# MAPA — Conteúdo em movimento
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Aplicativo para organizar ideias, calendário editorial, roteiros, produção e
+desempenho de conteúdo.
 
 ## Prerequisites
 
@@ -14,20 +13,47 @@ Drizzle support.
 npm install
 npm run dev
 npm run build
+npm run build:vercel
 ```
+
+## Supabase
+
+O ambiente publicado na Vercel usa Supabase Auth com e-mail/senha e a tabela
+`content_items`. Cada registro pertence a um `user_id`, com Row Level Security
+(RLS) para impedir que um usuário acesse os conteúdos de outro.
+
+1. Copie `.env.example` para `.env.local`.
+2. Preencha `NEXT_PUBLIC_SUPABASE_URL` e
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` com a chave publicável do projeto.
+3. Aplique a migração em `supabase/migrations/`.
+
+Nunca use uma chave `service_role` ou `sb_secret_...` no navegador ou em uma
+variável com prefixo `NEXT_PUBLIC_`.
+
+Sem essas variáveis, o aplicativo mantém o modo local usado pela versão
+existente no Sites. Com as variáveis, a tela de login é obrigatória e os dados
+são sincronizados no Supabase.
+
+## Vercel
+
+O arquivo `vercel.json` seleciona o framework Next.js e executa
+`npm run build:vercel`. Configure as duas variáveis públicas do Supabase nos
+ambientes Production e Preview antes da implantação.
 
 This starter does not use `wrangler.jsonc`.
 
-## Included Shape
+## Estrutura principal
 
-- edit site code under `app/`
+- interface em `app/`
+- cliente do Supabase em `lib/supabase.ts`
+- banco e RLS em `supabase/migrations/`
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
 - `db/schema.ts` starts intentionally empty
 - `examples/d1/` contains an optional D1 example surface
 - `drizzle.config.ts` supports local migration generation when needed
 
-## Workspace Auth Headers
+## Autenticação do Sites
 
 Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
 

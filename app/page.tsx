@@ -22,6 +22,11 @@ import {
   LayoutDashboard,
   Lightbulb,
   Link2,
+  LoaderCircle,
+  LockKeyhole,
+  LogIn,
+  LogOut,
+  Mail,
   Menu,
   MessageCircle,
   MoreHorizontal,
@@ -35,22 +40,39 @@ import {
   Target,
   TrendingUp,
   Users,
+  UserPlus,
   Video,
   X,
   Zap,
 } from "lucide-react";
+import type { User } from "@supabase/supabase-js";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type View = "hoje" | "calendario" | "roteiros" | "desempenho";
 type Status = "Ideia" | "Roteiro" | "Gravação" | "Edição" | "Agendado" | "Publicado";
 
 type ContentItem = {
-  id: number;
+  id: string;
   title: string;
   format: "Reel" | "Carrossel" | "Stories" | "YouTube";
   pillar: string;
   status: Status;
   date: string;
+  duration: string;
+  hook: string;
+  script: string;
+  cta: string;
+  notes: string;
+};
+
+type ContentRow = {
+  id: string;
+  title: string;
+  format: ContentItem["format"];
+  pillar: string;
+  status: Status;
+  scheduled_date: string;
   duration: string;
   hook: string;
   script: string;
@@ -86,7 +108,71 @@ function formatShortDate(date: string) {
     .replace(".", "");
 }
 
+function rowToContent(row: ContentRow): ContentItem {
+  return {
+    id: row.id,
+    title: row.title,
+    format: row.format,
+    pillar: row.pillar,
+    status: row.status,
+    date: row.scheduled_date,
+    duration: row.duration,
+    hook: row.hook,
+    script: row.script,
+    cta: row.cta,
+    notes: row.notes,
+  };
+}
+
+function contentToRow(item: ContentItem, userId: string) {
+  return {
+    id: item.id,
+    user_id: userId,
+    title: item.title,
+    format: item.format,
+    pillar: item.pillar,
+    status: item.status,
+    scheduled_date: item.date,
+    duration: item.duration,
+    hook: item.hook,
+    script: item.script,
+    cta: item.cta,
+    notes: item.notes,
+  };
+}
+
 export default function Home() {
+  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    let active = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setUser(data.session?.user ?? null);
+      setAuthReady(true);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  if (!authReady) return <AppLoading />;
+  if (isSupabaseConfigured && !user) return <AuthScreen />;
+
+  return <Workspace user={user} />;
+}
+
+function Workspace({ user }: { user: User | null }) {
   const [view, setView] = useState<View>("hoje");
   const [contents, setContents] = useState<ContentItem[]>(initialContents);
   const [ready, setReady] = useState(false);
@@ -94,11 +180,12 @@ export default function Home() {
   const [addOpen, setAddOpen] = useState(false);
   const [instagramOpen, setInstagramOpen] = useState(false);
   const [instagramDemo, setInstagramDemo] = useState(false);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [utilityModal, setUtilityModal] = useState<"help" | "notifications" | "profile" | null>(null);
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const saveTimersRef = useRef<Record<string, number>>({});
   const [newItem, setNewItem] = useState({
     title: "",
     format: "Reel" as ContentItem["format"],
@@ -108,25 +195,60 @@ export default function Home() {
   });
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
+    let active = true;
+    const saveTimers = saveTimersRef.current;
+
+    async function loadWorkspace() {
+      setInstagramDemo(window.localStorage.getItem(instagramDemoKey) === "true");
+
+      if (supabase && user) {
+        const { data, error } = await supabase
+          .from("content_items")
+          .select("id,title,format,pillar,status,scheduled_date,duration,hook,script,cta,notes")
+          .eq("user_id", user.id)
+          .order("scheduled_date", { ascending: true });
+
+        if (!active) return;
+        if (error) {
+          setToast("Não foi possível carregar seus conteúdos. Tente novamente.");
+          setReady(true);
+          return;
+        }
+
+        const loaded = (data as ContentRow[]).map(rowToContent);
+        setContents(loaded);
+        setSelectedId(loaded[0]?.id ?? null);
+        setReady(true);
+        return;
+      }
+
       const saved = window.localStorage.getItem(storageKey);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          setContents(Array.isArray(parsed) ? parsed : initialContents);
+          setContents(
+            Array.isArray(parsed)
+              ? parsed.map((item) => ({ ...item, id: String(item.id) }))
+              : initialContents,
+          );
         } catch {
           setContents(initialContents);
         }
       }
-      setInstagramDemo(window.localStorage.getItem(instagramDemoKey) === "true");
       setReady(true);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+    }
+
+    const frame = window.requestAnimationFrame(() => void loadWorkspace());
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
+      Object.values(saveTimers).forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [user]);
 
   useEffect(() => {
-    if (ready) window.localStorage.setItem(storageKey, JSON.stringify(contents));
-  }, [contents, ready]);
+    if (ready && !user) window.localStorage.setItem(storageKey, JSON.stringify(contents));
+  }, [contents, ready, user]);
 
   useEffect(() => {
     if (!toast) return;
@@ -158,26 +280,64 @@ export default function Home() {
   const scheduled = contents.filter((item) => item.status === "Agendado").length;
   const inProgress = contents.filter((item) => ["Roteiro", "Gravação", "Edição"].includes(item.status)).length;
   const weeklyGoal = Math.min(published, 5);
+  const displayName = String(user?.user_metadata?.full_name || user?.email?.split("@")[0] || "José Enrique");
+  const firstName = displayName.split(" ")[0] || "José";
+  const initials = displayName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "JE";
 
   function announce(message: string) {
     setToast(message);
   }
 
-  function changeStatus(id: number, status: Status) {
+  function changeStatus(id: string, status: Status) {
     setContents((items) => items.map((item) => (item.id === id ? { ...item, status } : item)));
+    if (supabase && user) {
+      void supabase
+        .from("content_items")
+        .update({ status })
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .then(({ error }) => {
+          if (error) announce("A etapa mudou na tela, mas não foi salva. Tente novamente.");
+        });
+    }
     announce(`Conteúdo movido para ${status}.`);
   }
 
   function updateSelected(field: keyof ContentItem, value: string) {
-    setContents((items) => items.map((item) => (item.id === selectedId ? { ...item, [field]: value } : item)));
+    if (!selectedId || field === "id") return;
+    const itemId = selectedId;
+    setContents((items) => items.map((item) => (item.id === itemId ? { ...item, [field]: value } : item)));
+
+    if (supabase && user) {
+      const client = supabase;
+      const userId = user.id;
+      window.clearTimeout(saveTimersRef.current[itemId]);
+      saveTimersRef.current[itemId] = window.setTimeout(() => {
+        const databaseField = field === "date" ? "scheduled_date" : field;
+        void client
+          .from("content_items")
+          .update({ [databaseField]: value })
+          .eq("id", itemId)
+          .eq("user_id", userId)
+          .then(({ error }) => {
+            if (error) announce("Alteração não salva. Verifique sua conexão.");
+          });
+      }, 650);
+    }
   }
 
-  function addContent(event: React.FormEvent) {
+  async function addContent(event: React.FormEvent) {
     event.preventDefault();
     if (!newItem.title.trim()) return;
     const item: ContentItem = {
-      id: Date.now(),
+      id: crypto.randomUUID(),
       ...newItem,
+      title: newItem.title.trim(),
       duration: newItem.format === "Carrossel" ? "8 páginas" : "60s",
       hook: "",
       script: "",
@@ -188,7 +348,16 @@ export default function Home() {
     setSelectedId(item.id);
     setAddOpen(false);
     setNewItem({ title: "", format: "Reel", pillar: "Educação", date: todayIso, status: "Ideia" });
-    announce("Novo conteúdo adicionado ao MAPA.");
+    if (supabase && user) {
+      const { error } = await supabase.from("content_items").insert(contentToRow(item, user.id));
+      if (error) {
+        setContents((items) => items.filter((content) => content.id !== item.id));
+        setSelectedId(null);
+        announce("Não foi possível salvar o conteúdo. Tente novamente.");
+        return;
+      }
+    }
+    announce(user ? "Novo conteúdo salvo na nuvem." : "Novo conteúdo adicionado ao MAPA.");
   }
 
   function openAdd(date?: string) {
@@ -209,8 +378,16 @@ export default function Home() {
     announce("Demonstração encerrada. O painel voltou a zero.");
   }
 
-  function resetWorkspace() {
-    if (!window.confirm("Apagar todos os conteúdos salvos neste navegador?")) return;
+  async function resetWorkspace() {
+    const target = user ? "na sua conta" : "neste navegador";
+    if (!window.confirm(`Apagar todos os conteúdos salvos ${target}?`)) return;
+    if (supabase && user) {
+      const { error } = await supabase.from("content_items").delete().eq("user_id", user.id);
+      if (error) {
+        announce("Não foi possível zerar seu espaço. Tente novamente.");
+        return;
+      }
+    }
     setContents([]);
     setSelectedId(null);
     setSearch("");
@@ -219,9 +396,9 @@ export default function Home() {
     announce("Espaço zerado com sucesso.");
   }
 
-  function createFromInsight() {
+  async function createFromInsight() {
     const item: ContentItem = {
-      id: Date.now(),
+      id: crypto.randomUUID(),
       title: "O que a balança não está mostrando?",
       format: "Reel",
       pillar: "Educação",
@@ -236,13 +413,59 @@ export default function Home() {
     setContents((items) => [...items, item]);
     setSelectedId(item.id);
     setView("roteiros");
+    if (supabase && user) {
+      const { error } = await supabase.from("content_items").insert(contentToRow(item, user.id));
+      if (error) {
+        setContents((items) => items.filter((content) => content.id !== item.id));
+        setSelectedId(null);
+        announce("Não foi possível salvar esse insight como roteiro.");
+        return;
+      }
+    }
     announce("Roteiro criado a partir do insight.");
+  }
+
+  async function saveSelected() {
+    if (!selected) return;
+    if (supabase && user) {
+      window.clearTimeout(saveTimersRef.current[selected.id]);
+      const row = contentToRow(selected, user.id);
+      const { error } = await supabase
+        .from("content_items")
+        .update({
+          title: row.title,
+          format: row.format,
+          pillar: row.pillar,
+          status: row.status,
+          scheduled_date: row.scheduled_date,
+          duration: row.duration,
+          hook: row.hook,
+          script: row.script,
+          cta: row.cta,
+          notes: row.notes,
+        })
+        .eq("id", selected.id)
+        .eq("user_id", user.id);
+      announce(error ? "Não foi possível salvar o roteiro." : "Roteiro salvo na nuvem.");
+      return;
+    }
+    announce("Roteiro salvo neste dispositivo.");
+  }
+
+  async function signOut() {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      announce("Não foi possível sair agora. Tente novamente.");
+      return;
+    }
+    setUtilityModal(null);
   }
 
   const titles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
     hoje: {
       eyebrow: "TERÇA-FEIRA, 4 DE AGOSTO",
-      title: contents.length ? "Bom dia, José." : "Seu MAPA começa aqui.",
+      title: contents.length ? `Bom dia, ${firstName}.` : "Seu MAPA começa aqui.",
       subtitle: contents.length
         ? "Vamos transformar as próximas ideias em publicações?"
         : "O espaço está zerado. Adicione sua primeira ideia para começar.",
@@ -302,8 +525,8 @@ export default function Home() {
         </div>
         <button className="nav-item quiet" onClick={() => setUtilityModal("help")}><CircleHelp size={19} /><span>Central de ajuda</span></button>
         <button className="profile-button" onClick={() => setUtilityModal("profile")}>
-          <span className="avatar">JE</span>
-          <span><strong>José Enrique</strong><small>Meu espaço</small></span>
+          <span className="avatar">{initials}</span>
+          <span><strong>{displayName}</strong><small>{user ? "Sincronizado" : "Meu espaço"}</small></span>
           <MoreHorizontal size={18} />
         </button>
       </aside>
@@ -357,7 +580,7 @@ export default function Home() {
               selected={selected}
               onSelect={setSelectedId}
               onUpdate={updateSelected}
-              onSave={() => announce("Roteiro salvo neste dispositivo.")}
+              onSave={() => void saveSelected()}
               onAdd={() => openAdd()}
             />
           )}
@@ -453,15 +676,128 @@ export default function Home() {
       {utilityModal === "profile" && (
         <Modal onClose={() => setUtilityModal(null)}>
           <div className="utility-modal">
-            <div className="profile-modal-head"><span className="avatar large">JE</span><span><span className="eyebrow">MEU ESPAÇO</span><h2>José Enrique</h2><p>Dados salvos neste navegador</p></span></div>
-            <div className="workspace-summary"><Settings2 size={20} /><span><strong>{contents.length} conteúdos cadastrados</strong><small>O MAPA começa vazio e mantém apenas o que você adicionar.</small></span></div>
-            <div className="modal-actions"><button className="button ghost danger" onClick={resetWorkspace}>Zerar meu espaço</button><button className="button primary" onClick={() => setUtilityModal(null)}>Concluir</button></div>
+            <div className="profile-modal-head"><span className="avatar large">{initials}</span><span><span className="eyebrow">MEU ESPAÇO</span><h2>{displayName}</h2><p>{user?.email || "Dados salvos neste navegador"}</p></span></div>
+            <div className="workspace-summary"><Settings2 size={20} /><span><strong>{contents.length} conteúdos cadastrados</strong><small>{user ? "Seus dados ficam sincronizados e protegidos por usuário." : "O MAPA mantém apenas o que você adicionar neste dispositivo."}</small></span></div>
+            <div className="modal-actions profile-actions"><button className="button ghost danger" onClick={() => void resetWorkspace()}>Zerar meu espaço</button>{user && <button className="button ghost" onClick={() => void signOut()}><LogOut size={17} /> Sair</button>}<button className="button primary" onClick={() => setUtilityModal(null)}>Concluir</button></div>
           </div>
         </Modal>
       )}
 
       {toast && <div className="toast" role="status"><CheckCircle2 size={19} />{toast}</div>}
     </div>
+  );
+}
+
+function AppLoading() {
+  return (
+    <main className="auth-shell auth-loading" aria-busy="true">
+      <div className="auth-brand"><span className="brand-mark"><span>M</span></span><strong>MAPA</strong></div>
+      <LoaderCircle className="spin" size={28} />
+      <p>Preparando seu espaço de criação...</p>
+    </main>
+  );
+}
+
+function AuthScreen() {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  function changeMode(nextMode: "login" | "signup") {
+    setMode(nextMode);
+    setPassword("");
+    setPasswordConfirmation("");
+    setFeedback(null);
+  }
+
+  async function submitAuth(event: React.FormEvent) {
+    event.preventDefault();
+    if (!supabase || submitting) return;
+
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || password.length < 8) {
+      setFeedback({ tone: "error", text: "Use um e-mail válido e uma senha com pelo menos 8 caracteres." });
+      return;
+    }
+    if (mode === "signup" && !name.trim()) {
+      setFeedback({ tone: "error", text: "Informe seu nome para criar a conta." });
+      return;
+    }
+    if (mode === "signup" && password !== passwordConfirmation) {
+      setFeedback({ tone: "error", text: "As senhas não são iguais." });
+      return;
+    }
+
+    setSubmitting(true);
+    setFeedback(null);
+
+    if (mode === "login") {
+      const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      if (error) {
+        setFeedback({ tone: "error", text: "E-mail ou senha incorretos. Verifique os dados e tente novamente." });
+      }
+      setSubmitting(false);
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password,
+      options: { data: { full_name: name.trim() } },
+    });
+    if (error) {
+      setFeedback({ tone: "error", text: error.message.includes("already") ? "Este e-mail já possui uma conta." : "Não foi possível criar a conta. Tente novamente." });
+    } else if (!data.session) {
+      setFeedback({ tone: "success", text: "Conta criada. Confira seu e-mail para confirmar o acesso." });
+    }
+    setSubmitting(false);
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-story">
+        <div className="auth-brand"><span className="brand-mark"><span>M</span></span><span><strong>MAPA</strong><small>conteúdo em movimento</small></span></div>
+        <div className="auth-copy">
+          <span className="eyebrow">SEU SISTEMA DE PRODUÇÃO</span>
+          <h1>Da ideia à publicação, tudo no lugar.</h1>
+          <p>Planeje o calendário, escreva roteiros e acompanhe cada conteúdo com um espaço seguro e sincronizado.</p>
+          <div className="auth-benefits">
+            <span><CalendarDays size={19} /><strong>Calendário editorial</strong></span>
+            <span><FileText size={19} /><strong>Estúdio de roteiros</strong></span>
+            <span><LockKeyhole size={19} /><strong>Dados separados por usuário</strong></span>
+          </div>
+        </div>
+        <small className="auth-footnote">MAPA · produtividade para criação de conteúdo</small>
+      </section>
+
+      <section className="auth-panel">
+        <div className="auth-card">
+          <div className="auth-mobile-brand"><span className="brand-mark"><span>M</span></span><strong>MAPA</strong></div>
+          <span className="eyebrow">BEM-VINDO AO MAPA</span>
+          <h2>{mode === "login" ? "Entre no seu espaço" : "Crie sua conta"}</h2>
+          <p>{mode === "login" ? "Use seu e-mail e senha para continuar de onde parou." : "Seu espaço começa zerado e será sincronizado com segurança."}</p>
+
+          <div className="auth-tabs" aria-label="Tipo de acesso">
+            <button type="button" className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}><LogIn size={17} /> Entrar</button>
+            <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => changeMode("signup")}><UserPlus size={17} /> Criar conta</button>
+          </div>
+
+          <form className="auth-form" onSubmit={submitAuth}>
+            {mode === "signup" && <label>Seu nome<div className="auth-input"><UserPlus size={18} /><input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Como podemos chamar você?" /></div></label>}
+            <label>E-mail<div className="auth-input"><Mail size={18} /><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@exemplo.com" /></div></label>
+            <label>Senha<div className="auth-input"><LockKeyhole size={18} /><input type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" /></div></label>
+            {mode === "signup" && <label>Confirme a senha<div className="auth-input"><LockKeyhole size={18} /><input type="password" minLength={8} autoComplete="new-password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} placeholder="Digite a senha novamente" /></div></label>}
+            {feedback && <div className={`auth-feedback ${feedback.tone}`} role="status">{feedback.tone === "success" ? <CheckCircle2 size={18} /> : <CircleHelp size={18} />}<span>{feedback.text}</span></div>}
+            <button className="button primary auth-submit" type="submit" disabled={submitting}>{submitting ? <LoaderCircle className="spin" size={19} /> : mode === "login" ? <LogIn size={19} /> : <UserPlus size={19} />}{submitting ? "Aguarde..." : mode === "login" ? "Entrar no MAPA" : "Criar meu espaço"}</button>
+          </form>
+          <small className="auth-privacy">Sua senha é processada pelo Supabase Auth e não fica gravada no código do MAPA.</small>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -480,8 +816,8 @@ function TodayView({
   scheduled: number;
   inProgress: number;
   onView: (view: View) => void;
-  onSelect: (id: number) => void;
-  onStatusChange: (id: number, status: Status) => void;
+  onSelect: (id: string) => void;
+  onStatusChange: (id: string, status: Status) => void;
   onAdd: () => void;
 }) {
   const todayItems = contents.filter((item) => item.date === todayIso);
@@ -529,7 +865,7 @@ function TodayView({
           {boardStatuses.map((status) => {
             const items = contents.filter((item) => item.status === status).slice(0, 2);
             return (
-              <div className="kanban-column" key={status} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onStatusChange(Number(event.dataTransfer.getData("text/plain")), status)}>
+              <div className="kanban-column" key={status} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onStatusChange(event.dataTransfer.getData("text/plain"), status)}>
                 <div className="column-head"><span className={`column-dot dot-${status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`} /> <strong>{status}</strong><em>{contents.filter((item) => item.status === status).length}</em></div>
                 {items.map((item) => (
                   <article className="kanban-card" key={item.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/plain", String(item.id))} onClick={() => onSelect(item.id)}>
@@ -548,7 +884,7 @@ function TodayView({
   );
 }
 
-function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; onAdd: (date?: string) => void; onSelect: (id: number) => void }) {
+function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; onAdd: (date?: string) => void; onSelect: (id: string) => void }) {
   const referenceToday = new Date(`${todayIso}T12:00:00`);
   const [month, setMonth] = useState(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1));
   const [filterOpen, setFilterOpen] = useState(false);
@@ -605,7 +941,7 @@ function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; 
   );
 }
 
-function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: number) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onSave: () => void; onAdd: () => void }) {
+function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const visibleContents = contents.filter((item) => {
     if (libraryFilter === "Em roteiro") return item.status === "Roteiro";
@@ -624,7 +960,7 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
           {visibleContents.map((item) => (
             <button key={item.id} className={item.id === selected.id ? "library-item selected" : "library-item"} onClick={() => onSelect(item.id)}>
               <span className={`format-icon mini ${formatColors[item.format]}`}>{item.format === "Reel" ? <Play size={15} /> : <FileText size={15} />}</span>
-              <span><strong>{item.title}</strong><small>{item.format} · Editado {item.id % 2 ? "hoje" : "ontem"}</small></span>
+              <span><strong>{item.title}</strong><small>{item.format} · Salvo no MAPA</small></span>
               <ChevronRight size={16} />
             </button>
           ))}
