@@ -63,6 +63,12 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /draggable/);
   assert.match(page, /onDrop=/);
   assert.match(page, /scheduled_date: date/);
+  assert.match(page, /FASE DO CONTEÚDO/);
+  assert.match(page, /Avançar para \{nextStatus\}/);
+  assert.match(page, /aria-label="Fase atual da criação do conteúdo"/);
+  assert.match(page, /onStatusChange\(selected\.id, status\)/);
+  assert.match(page, /Fase: \{item\.status\}/);
+  assert.match(page, /voltou à fase anterior/);
 
   const buttonTags = page.match(/<button\b[\s\S]*?>/g) ?? [];
   assert.ok(buttonTags.length > 20);

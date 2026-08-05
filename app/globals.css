@@ -251,8 +251,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .editor-panel { overflow: hidden; }
 .editor-toolbar { min-height: 61px; padding: 0 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 15px; }
 .editor-title, .editor-toolbar > div:last-child { display: flex; align-items: center; gap: 8px; }
+.editor-toolbar > div:last-child { flex-wrap: wrap; justify-content: flex-end; }
+.button.phase-next { border-color: #d1df8f; color: #263047; background: #eff8c4; }
+.button.phase-next:hover { border-color: #b5cc54; background: var(--lime); }
 .saved-state { display: flex; align-items: center; gap: 4px; color: #8c919d; font-size: 8px; }
 .saved-state svg { color: var(--green); }
+.phase-tracker { padding: 13px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 14px; background: #fafbf6; }
+.phase-tracker-label { flex: 0 0 auto; color: #868c98; font: 800 9px/1.2 var(--font-display); letter-spacing: .11em; }
+.phase-steps { min-width: 0; flex: 1; display: grid; grid-template-columns: repeat(6,minmax(78px,1fr)); gap: 6px; }
+.phase-steps button { min-width: 0; min-height: 39px; padding: 5px 8px; border: 1px solid #dedfd8; border-radius: 9px; display: flex; align-items: center; justify-content: center; gap: 6px; color: #777d8b; background: #fff; font-size: 10px; font-weight: 750; cursor: pointer; transition: .16s ease; }
+.phase-steps button:hover { border-color: #bdcc72; color: var(--ink); transform: translateY(-1px); }
+.phase-steps button > span { width: 20px; height: 20px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; color: #8f949e; background: #eff0eb; font-size: 9px; }
+.phase-steps button.complete { color: #427159; border-color: #cae4d4; background: #f4fbf6; }
+.phase-steps button.complete > span { color: white; background: #65a87f; }
+.phase-steps button.current { color: var(--navy); border-color: var(--lime); background: #edfac1; box-shadow: 0 3px 10px rgba(177,211,52,.18); }
+.phase-steps button.current > span { color: var(--lime); background: var(--navy); }
 .editor-scroll { padding: 29px clamp(20px,4vw,54px) 40px; }
 .title-input > span { display: block; color: #9599a4; font: 800 8px var(--font-display); letter-spacing: .12em; }
 .title-input input { width: 100%; margin-top: 6px; padding: 0 0 10px; border: 0; border-bottom: 1px solid var(--line); outline: 0; background: transparent; color: var(--ink); font: 800 clamp(22px,3vw,30px)/1.2 var(--font-display); letter-spacing: -.04em; }
@@ -516,6 +529,8 @@ body { font-size: 16px; }
 
 .editor-toolbar { min-height: 70px; }
 .saved-state { font-size: 11px; }
+.phase-tracker-label { font-size: 10px; }
+.phase-steps button { font-size: 12px; }
 .title-input > span { font-size: 11px; }
 .title-input input { font-size: clamp(29px, 3vw, 36px); }
 .brief-row { gap: 24px; padding-top: 13px; font-size: 13px; }
@@ -839,9 +854,15 @@ body { font-size: 16px; }
   .library-collapsed-rail { min-height: 68px; padding: 0 13px; flex-direction: row; }
   .library-collapsed-rail > span { margin: 0 auto; writing-mode: initial; transform: none; }
   .structured-editor .editor-scroll { padding-inline: 18px; }
+  .phase-tracker { align-items: flex-start; flex-direction: column; }
+  .phase-steps { width: 100%; display: flex; overflow-x: auto; padding-bottom: 3px; }
+  .phase-steps button { flex: 0 0 118px; }
 }
 
 @media (max-width: 700px) {
+  .editor-toolbar { padding-block: 10px; flex-wrap: wrap; }
+  .editor-toolbar > div:last-child { width: 100%; justify-content: flex-start; }
+  .editor-toolbar .button { flex: 1 1 auto; }
   .script-document-summary { align-items: flex-start; flex-direction: column; gap: 8px; }
   .script-block-header { align-items: flex-start; flex-direction: column; }
   .script-block-tools { width: 100%; flex-wrap: wrap; }

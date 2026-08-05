@@ -548,6 +548,8 @@ function Workspace({ user }: { user: User | null }) {
   }
 
   function changeStatus(id: string, status: Status) {
+    const previous = contents.find((item) => item.id === id)?.status;
+    if (!previous || previous === status) return;
     setContents((items) => items.map((item) => (item.id === id ? { ...item, status } : item)));
     if (supabase && user) {
       void supabase
@@ -556,10 +558,14 @@ function Workspace({ user }: { user: User | null }) {
         .eq("id", id)
         .eq("user_id", user.id)
         .then(({ error }) => {
-          if (error) announce("A etapa mudou na tela, mas não foi salva. Tente novamente.");
+          if (!error) return;
+          setContents((items) => items.map((item) => (
+            item.id === id && item.status === status ? { ...item, status: previous } : item
+          )));
+          announce("Não foi possível salvar a nova fase. O conteúdo voltou à fase anterior.");
         });
     }
-    announce(`Conteúdo movido para ${status}.`);
+    announce(`Fase alterada para ${status}.`);
   }
 
   async function moveContentDate(id: string, date: string) {
@@ -903,6 +909,7 @@ function Workspace({ user }: { user: User | null }) {
               selected={selected}
               onSelect={setSelectedId}
               onUpdate={updateSelected}
+              onStatusChange={changeStatus}
               onSave={() => void saveSelected()}
               onAdd={() => openAdd()}
             />
@@ -1333,10 +1340,12 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
   );
 }
 
-function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onSave: () => void; onAdd: () => void }) {
+function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
+  const currentStatusIndex = statusOrder.indexOf(selected.status);
+  const nextStatus = statusOrder[currentStatusIndex + 1];
   const visibleContents = contents.filter((item) => {
     if (libraryFilter === "Em roteiro") return item.status === "Roteiro";
     if (libraryFilter === "Prontos") return ["Agendado", "Publicado"].includes(item.status);
@@ -1383,7 +1392,7 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
               {visibleContents.map((item) => (
                 <button key={item.id} className={item.id === selected.id ? "library-item selected" : "library-item"} onClick={() => onSelect(item.id)}>
                   <span className={`format-icon mini ${formatColors[item.format]}`}>{item.format === "Reel" ? <Play size={15} /> : <FileText size={15} />}</span>
-                  <span><strong>{item.title}</strong><small>{item.format} · Salvo no MAPA</small></span>
+                  <span><strong>{item.title}</strong><small>{item.format} · Fase: {item.status}</small></span>
                   <ChevronRight size={16} />
                 </button>
               ))}
@@ -1396,7 +1405,25 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
       <article className="panel editor-panel structured-editor">
         <div className="editor-toolbar">
           <div className="editor-title"><span className={`micro-tag ${formatColors[selected.format]}`}>{selected.format}</span><span className={`status-pill status-${selected.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{selected.status}</span></div>
-          <div><span className="saved-state"><Check size={15} /> Salvo automaticamente</span><button className="button primary small" onClick={onSave}><Save size={16} /> Salvar</button></div>
+          <div>
+            <span className="saved-state"><Check size={15} /> Salvo automaticamente</span>
+            {nextStatus && <button type="button" className="button phase-next small" onClick={() => onStatusChange(selected.id, nextStatus)}>Avançar para {nextStatus} <ChevronRight size={16} /></button>}
+            <button className="button primary small" onClick={onSave}><Save size={16} /> Salvar</button>
+          </div>
+        </div>
+        <div className="phase-tracker" aria-label="Fase atual da criação do conteúdo">
+          <span className="phase-tracker-label">FASE DO CONTEÚDO</span>
+          <div className="phase-steps">
+            {statusOrder.map((status, index) => (
+              <button
+                type="button"
+                key={status}
+                className={`${index < currentStatusIndex ? "complete" : ""} ${status === selected.status ? "current" : ""}`}
+                aria-pressed={status === selected.status}
+                onClick={() => onStatusChange(selected.id, status)}
+              ><span>{index < currentStatusIndex ? <Check size={13} /> : index + 1}</span>{status}</button>
+            ))}
+          </div>
         </div>
         <div className="editor-scroll">
           <label className="title-input"><span>TÍTULO</span><input value={selected.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
