@@ -168,28 +168,31 @@ function parseScriptDocument(item: ContentItem): ScriptDocument {
     } catch {
       // Roteiros antigos em texto puro são convertidos abaixo.
     }
-
-    const legacyText = item.script.trim();
-    const headingPattern = /(?:^|\n)\s*(?:BLOCO\s*([1-9])\s*[·.\-–—:]\s*[^\n]+|(?:10\s*[·.\-–—:]\s*)?CAPTION\s+PRONTA(?:\s+LEGENDA)?)\s*\n?/gim;
-    const headings = Array.from(legacyText.matchAll(headingPattern));
-
-    if (headings.length) {
-      headings.forEach((heading, index) => {
-        const blockNumber = heading[1] ? Number(heading[1]) : 10;
-        const definition = scriptBlockDefinitions[blockNumber - 1];
-        if (!definition) return;
-        const start = (heading.index ?? 0) + heading[0].length;
-        const end = headings[index + 1]?.index ?? legacyText.length;
-        document.blocks[definition.id].text = legacyText.slice(start, end).trim();
-      });
-    } else {
-      document.blocks.notableOne.text = legacyText;
-    }
   }
 
-  if (item.hook.trim() && !document.blocks.headline.text) document.blocks.headline.text = item.hook.trim();
-  if (item.cta.trim() && !document.blocks.presentation.text) document.blocks.presentation.text = item.cta.trim();
-  if (item.notes.trim() && !document.blocks.presentation.note) document.blocks.presentation.note = item.notes.trim();
+  const legacyText = [item.hook, item.script, item.cta, item.notes]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const headingPattern = /(?:^|\n)\s*(?:BLOCO\s*([1-9])\s*[·.\-–—:]\s*(?:HEADLINE|INTENSIFICADOR\s+DE\s+MISTÉRIO|CTA\s+DE\s+SALVAMENTO|CONTEÚDO\s+NOTÁVEL(?:\s*[12])?|CTA\s+DE\s+COMPARTILHAMENTO|CRENÇA|APRESENTAÇÃO\s+E\s+CTAS\s+FINAIS)|(?:BLOCO\s*10\s*[·.\-–—:]\s*)?CAPTION\s+PRONTA(?:\s+LEGENDA)?)\s*/gim;
+  const headings = Array.from(legacyText.matchAll(headingPattern));
+
+  if (headings.length) {
+    headings.forEach((heading, index) => {
+      const blockNumber = heading[1] ? Number(heading[1]) : 10;
+      const definition = scriptBlockDefinitions[blockNumber - 1];
+      if (!definition) return;
+      const start = (heading.index ?? 0) + heading[0].length;
+      const end = headings[index + 1]?.index ?? legacyText.length;
+      document.blocks[definition.id].text = legacyText.slice(start, end).trim();
+    });
+    return document;
+  }
+
+  document.blocks.headline.text = item.hook.trim();
+  document.blocks.notableOne.text = item.script.trim();
+  document.blocks.presentation.text = item.cta.trim();
+  document.blocks.presentation.note = item.notes.trim();
   return document;
 }
 
