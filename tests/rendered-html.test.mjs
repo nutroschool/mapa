@@ -144,3 +144,43 @@ test("implements real Instagram OAuth and keeps Meta tokens server-side", async 
   assert.doesNotMatch(page + instagramClient, /META_INSTAGRAM_APP_SECRET|INSTAGRAM_TOKEN_ENCRYPTION_KEY/);
   assert.doesNotMatch(envExample, /META_INSTAGRAM_APP_SECRET=\S{20,}/);
 });
+
+test("connects each user to Google Drive and uploads editing videos securely", async () => {
+  const [page, driveClient, edgeFunction, migration, envExample] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/google-drive.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/functions/google-drive-integration/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260805155654_google_drive_integration.sql", import.meta.url), "utf8"),
+    readFile(new URL("../.env.example", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /selected\.status === "Edição"/);
+  assert.match(page, /Subir vídeo/);
+  assert.match(page, /Conectar meu Google Drive/);
+  assert.match(page, /accept="video\/\*"/);
+  assert.match(page, /driveUploadProgress/);
+  assert.match(page, /Cada pessoa escolhe e autoriza o próprio Google Drive/);
+  assert.match(driveClient, /functions\.invoke\("google-drive-integration"/);
+  assert.match(driveClient, /XMLHttpRequest/);
+  assert.match(driveClient, /create-upload-session/);
+  assert.match(edgeFunction, /auth\.getUser\(accessToken\)/);
+  assert.match(edgeFunction, /https:\/\/www\.googleapis\.com\/auth\/drive\.file/);
+  assert.match(edgeFunction, /uploadType", "resumable"/);
+  assert.match(edgeFunction, /AES-GCM/);
+  assert.match(edgeFunction, /\.eq\("user_id", user\.id\)/);
+  assert.match(migration, /google_drive_connections/);
+  assert.match(migration, /enable row level security/gi);
+  assert.match(migration, /revoke all.+anon, authenticated/is);
+  assert.match(migration, /drive_file_id/);
+  assert.doesNotMatch(page + driveClient, /GOOGLE_DRIVE_CLIENT_SECRET|GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY/);
+  assert.doesNotMatch(envExample, /GOOGLE_DRIVE_CLIENT_SECRET=\S{20,}/);
+});
+
+test("uses the current Sao Paulo date instead of a fixed day", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /America\/Sao_Paulo/);
+  assert.match(page, /dateIsoInTimeZone/);
+  assert.match(page, /formatTodayHeading\(todayIso\)/);
+  assert.doesNotMatch(page, /2026-08-04/);
+  assert.doesNotMatch(page, /TERÇA-FEIRA, 4 DE AGOSTO/);
+});

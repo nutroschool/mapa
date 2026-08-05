@@ -12,10 +12,13 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  CloudUpload,
   Clock3,
   Eye,
+  ExternalLink,
   FileText,
   Filter,
+  FolderOpen,
   GripVertical,
   Heart,
   Instagram,
@@ -59,6 +62,12 @@ import {
   type InstagramConnectionState,
   type InstagramMetrics,
 } from "@/lib/instagram";
+import {
+  invokeGoogleDrive,
+  uploadVideoToGoogleDrive,
+  type GoogleDriveConnectionState,
+  type GoogleDriveStatus,
+} from "@/lib/google-drive";
 import InstagramPerformance from "@/components/InstagramPerformance";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
@@ -78,6 +87,12 @@ type ContentItem = {
   script: string;
   cta: string;
   notes: string;
+  driveFileId: string | null;
+  driveFileName: string | null;
+  driveWebViewLink: string | null;
+  driveMimeType: string | null;
+  driveFileSize: number | null;
+  driveUploadedAt: string | null;
 };
 
 type ContentRow = {
@@ -92,6 +107,12 @@ type ContentRow = {
   script: string;
   cta: string;
   notes: string;
+  drive_file_id: string | null;
+  drive_file_name: string | null;
+  drive_web_view_link: string | null;
+  drive_mime_type: string | null;
+  drive_file_size: number | null;
+  drive_uploaded_at: string | null;
 };
 
 const initialContents: ContentItem[] = [];
@@ -101,7 +122,29 @@ const funnelStages: FunnelStage[] = ["Topo de funil", "Meio de funil", "Fundo de
 const weekDays = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
 const storageKey = "mapa-content-items-v2";
 const instagramDemoKey = "mapa-instagram-demo-v2";
-const todayIso = "2026-08-04";
+const appTimeZone = "America/Sao_Paulo";
+
+function dateIsoInTimeZone(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: appTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+const todayIso = dateIsoInTimeZone();
+
+function formatTodayHeading(date: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: appTimeZone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(new Date(`${date}T12:00:00-03:00`)).toLocaleUpperCase("pt-BR");
+}
 const instagramCallbackMessages: Record<string, string> = {
   missing_state: "A Meta não devolveu a confirmação de segurança. Inicie a conexão novamente.",
   invalid_state: "A tentativa de conexão expirou. Inicie novamente e conclua o login em até 10 minutos.",
@@ -110,6 +153,16 @@ const instagramCallbackMessages: Record<string, string> = {
   profile_fetch: "A autorização foi aceita, mas a Meta não liberou os dados da conta profissional. Confirme se a conta é Comercial ou Criador.",
   connection_save: "A conta foi autorizada, mas o MAPA não conseguiu salvar a conexão. Tente novamente.",
   callback_failed: "A Meta não concluiu a autorização. Tente novamente.",
+};
+
+const googleDriveCallbackMessages: Record<string, string> = {
+  missing_state: "O Google não devolveu a confirmação de segurança. Inicie a conexão novamente.",
+  invalid_state: "A tentativa de conexão expirou. Inicie novamente e conclua em até 10 minutos.",
+  token_exchange: "O Google não conseguiu validar a autorização. Tente conectar novamente.",
+  profile_fetch: "A conta foi autorizada, mas o Google não liberou a identificação necessária.",
+  connection_save: "A conta foi autorizada, mas o MAPA não conseguiu salvar a conexão.",
+  folder_setup: "A conta foi conectada, mas a pasta MAPA Conteúdos não pôde ser preparada.",
+  callback_failed: "O Google Drive não concluiu a autorização. Tente novamente.",
 };
 
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
@@ -261,6 +314,14 @@ function formatShortDate(date: string) {
     .replace(".", "");
 }
 
+function formatFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** unitIndex;
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
 function rowToContent(row: ContentRow): ContentItem {
   return {
     id: row.id,
@@ -274,6 +335,12 @@ function rowToContent(row: ContentRow): ContentItem {
     script: row.script,
     cta: row.cta,
     notes: row.notes,
+    driveFileId: row.drive_file_id,
+    driveFileName: row.drive_file_name,
+    driveWebViewLink: row.drive_web_view_link,
+    driveMimeType: row.drive_mime_type,
+    driveFileSize: row.drive_file_size,
+    driveUploadedAt: row.drive_uploaded_at,
   };
 }
 
@@ -291,6 +358,12 @@ function contentToRow(item: ContentItem, userId: string) {
     script: item.script,
     cta: item.cta,
     notes: item.notes,
+    drive_file_id: item.driveFileId,
+    drive_file_name: item.driveFileName,
+    drive_web_view_link: item.driveWebViewLink,
+    drive_mime_type: item.driveMimeType,
+    drive_file_size: item.driveFileSize,
+    drive_uploaded_at: item.driveUploadedAt,
   };
 }
 
@@ -352,6 +425,12 @@ function Workspace({ user }: { user: User | null }) {
   const [instagramPeriod, setInstagramPeriod] = useState<30 | 90>(30);
   const [instagramMetricsLoading, setInstagramMetricsLoading] = useState(false);
   const [instagramError, setInstagramError] = useState("");
+  const [driveState, setDriveState] = useState<GoogleDriveConnectionState>("checking");
+  const [driveStatus, setDriveStatus] = useState<GoogleDriveStatus | null>(null);
+  const [driveModalContentId, setDriveModalContentId] = useState<string | null>(null);
+  const [driveFile, setDriveFile] = useState<File | null>(null);
+  const [driveUploadProgress, setDriveUploadProgress] = useState(0);
+  const [driveError, setDriveError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [utilityModal, setUtilityModal] = useState<"help" | "notifications" | "profile" | null>(null);
   const [toast, setToast] = useState("");
@@ -410,6 +489,20 @@ function Workspace({ user }: { user: User | null }) {
     }
   }, []);
 
+  const loadGoogleDriveStatus = useCallback(async () => {
+    setDriveState("checking");
+    setDriveError("");
+    try {
+      const status = await invokeGoogleDrive<GoogleDriveStatus>({ action: "status" });
+      setDriveStatus(status);
+      setDriveState(status.connected ? "connected" : "disconnected");
+    } catch (error) {
+      setDriveStatus(null);
+      setDriveState("error");
+      setDriveError(error instanceof Error ? error.message : "Não foi possível verificar o Google Drive.");
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     const saveTimers = saveTimersRef.current;
@@ -420,7 +513,7 @@ function Workspace({ user }: { user: User | null }) {
       if (supabase && user) {
         const { data, error } = await supabase
           .from("content_items")
-          .select("id,title,format,pillar,status,scheduled_date,duration,hook,script,cta,notes")
+          .select("id,title,format,pillar,status,scheduled_date,duration,hook,script,cta,notes,drive_file_id,drive_file_name,drive_web_view_link,drive_mime_type,drive_file_size,drive_uploaded_at")
           .eq("user_id", user.id)
           .order("scheduled_date", { ascending: true });
 
@@ -444,7 +537,17 @@ function Workspace({ user }: { user: User | null }) {
           const parsed = JSON.parse(saved);
           setContents(
             Array.isArray(parsed)
-              ? parsed.map((item) => ({ ...item, id: String(item.id), pillar: normalizeFunnelStage(String(item.pillar || "")) }))
+              ? parsed.map((item) => ({
+                  ...item,
+                  id: String(item.id),
+                  pillar: normalizeFunnelStage(String(item.pillar || "")),
+                  driveFileId: item.driveFileId || null,
+                  driveFileName: item.driveFileName || null,
+                  driveWebViewLink: item.driveWebViewLink || null,
+                  driveMimeType: item.driveMimeType || null,
+                  driveFileSize: typeof item.driveFileSize === "number" ? item.driveFileSize : null,
+                  driveUploadedAt: item.driveUploadedAt || null,
+                }))
               : initialContents,
           );
         } catch {
@@ -471,6 +574,16 @@ function Workspace({ user }: { user: User | null }) {
     }
     return () => window.cancelAnimationFrame(frame);
   }, [loadInstagramStatus, user]);
+
+  useEffect(() => {
+    let frame = 0;
+    if (!user || !supabase) {
+      frame = window.requestAnimationFrame(() => setDriveState("disconnected"));
+    } else {
+      frame = window.requestAnimationFrame(() => void loadGoogleDriveStatus());
+    }
+    return () => window.cancelAnimationFrame(frame);
+  }, [loadGoogleDriveStatus, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -503,6 +616,43 @@ function Workspace({ user }: { user: User | null }) {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [loadInstagramStatus, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const frame = window.requestAnimationFrame(() => {
+      const params = new URLSearchParams(window.location.search);
+      const result = params.get("drive");
+      if (!result) return;
+      const reason = params.get("reason") || "callback_failed";
+      const contentId = params.get("content");
+
+      params.delete("drive");
+      params.delete("reason");
+      params.delete("content");
+      const query = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      setView("roteiros");
+      if (contentId) setSelectedId(contentId);
+
+      if (result === "connected") {
+        setToast("Google Drive conectado. Agora escolha o vídeo.");
+        void loadGoogleDriveStatus();
+        if (contentId) setDriveModalContentId(contentId);
+        return;
+      }
+      if (result === "cancelled") {
+        setDriveState("disconnected");
+        setToast("Conexão com o Google Drive cancelada.");
+        return;
+      }
+      const message = googleDriveCallbackMessages[reason] || googleDriveCallbackMessages.callback_failed;
+      setDriveState("error");
+      setDriveError(message);
+      setToast("Não foi possível conectar o Google Drive.");
+      if (contentId) setDriveModalContentId(contentId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loadGoogleDriveStatus, user]);
 
   useEffect(() => {
     if (
@@ -545,6 +695,7 @@ function Workspace({ user }: { user: User | null }) {
   }, []);
 
   const selected = contents.find((item) => item.id === selectedId) ?? contents[0];
+  const driveModalContent = contents.find((item) => item.id === driveModalContentId) ?? null;
   const filteredContents = useMemo(
     () =>
       contents.filter((item) =>
@@ -676,6 +827,12 @@ function Workspace({ user }: { user: User | null }) {
       script: "",
       cta: "",
       notes: "",
+      driveFileId: null,
+      driveFileName: null,
+      driveWebViewLink: null,
+      driveMimeType: null,
+      driveFileSize: null,
+      driveUploadedAt: null,
     };
     setContents((items) => [...items, item]);
     setSelectedId(item.id);
@@ -720,6 +877,79 @@ function Workspace({ user }: { user: User | null }) {
       setInstagramState("error");
       setInstagramError(message);
       announce(message);
+    }
+  }
+
+  function openDriveUpload(contentId: string) {
+    setDriveModalContentId(contentId);
+    setDriveFile(null);
+    setDriveUploadProgress(0);
+    setDriveError("");
+    if (driveState === "error") void loadGoogleDriveStatus();
+  }
+
+  async function connectGoogleDrive(contentId: string) {
+    if (driveState === "connecting") return;
+    setDriveState("connecting");
+    setDriveError("");
+    try {
+      const data = await invokeGoogleDrive<{ authorization_url: string }>({
+        action: "start",
+        return_to: `/?view=roteiros&content=${encodeURIComponent(contentId)}`,
+      });
+      window.location.assign(data.authorization_url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível iniciar a conexão com o Google Drive.";
+      setDriveState("error");
+      setDriveError(message);
+      announce(message);
+    }
+  }
+
+  async function disconnectGoogleDrive() {
+    if (!window.confirm("Desconectar esta conta do Google Drive? Os vídeos já enviados não serão apagados.")) return;
+    try {
+      await invokeGoogleDrive<{ connected: false }>({ action: "disconnect" });
+      setDriveState("disconnected");
+      setDriveStatus(null);
+      setDriveFile(null);
+      setDriveUploadProgress(0);
+      announce("Google Drive desconectado.");
+    } catch (error) {
+      announce(error instanceof Error ? error.message : "Não foi possível desconectar o Google Drive.");
+    }
+  }
+
+  async function uploadDriveVideo(event: React.FormEvent) {
+    event.preventDefault();
+    const contentId = driveModalContentId;
+    if (!contentId || !driveFile || driveState === "uploading") return;
+    if (!driveFile.type.startsWith("video/")) {
+      setDriveError("Selecione um arquivo de vídeo.");
+      return;
+    }
+
+    setDriveState("uploading");
+    setDriveUploadProgress(0);
+    setDriveError("");
+    try {
+      const { file } = await uploadVideoToGoogleDrive(contentId, driveFile, setDriveUploadProgress);
+      setContents((items) => items.map((item) => item.id === contentId ? {
+        ...item,
+        driveFileId: file.id,
+        driveFileName: file.name,
+        driveWebViewLink: file.web_view_link,
+        driveMimeType: file.mime_type,
+        driveFileSize: file.size,
+        driveUploadedAt: file.uploaded_at,
+      } : item));
+      setDriveState("connected");
+      setDriveFile(null);
+      announce("Vídeo enviado para o seu Google Drive.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível enviar o vídeo.";
+      setDriveState(message.includes("Conecte") || message.includes("expirou") ? "disconnected" : "error");
+      setDriveError(message);
     }
   }
 
@@ -774,6 +1004,12 @@ function Workspace({ user }: { user: User | null }) {
       script: "",
       cta: "",
       notes: "Ideia criada a partir de um insight do painel de demonstração.",
+      driveFileId: null,
+      driveFileName: null,
+      driveWebViewLink: null,
+      driveMimeType: null,
+      driveFileSize: null,
+      driveUploadedAt: null,
     };
     setContents((items) => [...items, item]);
     setSelectedId(item.id);
@@ -829,7 +1065,7 @@ function Workspace({ user }: { user: User | null }) {
 
   const titles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
     hoje: {
-      eyebrow: "TERÇA-FEIRA, 4 DE AGOSTO",
+      eyebrow: formatTodayHeading(todayIso),
       title: contents.length ? `Bom dia, ${firstName}.` : "Seu MAPA começa aqui.",
       subtitle: contents.length
         ? "Vamos transformar as próximas ideias em publicações?"
@@ -959,6 +1195,7 @@ function Workspace({ user }: { user: User | null }) {
               onUpdate={updateSelected}
               onStatusChange={changeStatus}
               onDelete={(id) => void deleteContent(id)}
+              onUploadVideo={openDriveUpload}
               onSave={() => void saveSelected()}
               onAdd={() => openAdd()}
             />
@@ -1044,6 +1281,95 @@ function Workspace({ user }: { user: User | null }) {
                     </button>
                   </>}
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {driveModalContent && (
+        <Modal onClose={() => {
+          if (driveState === "uploading") return;
+          setDriveModalContentId(null);
+          setDriveFile(null);
+          setDriveUploadProgress(0);
+          setDriveError("");
+        }} wide>
+          <div className="drive-modal">
+            <div className="modal-icon drive"><FolderOpen size={24} /></div>
+            <span className="eyebrow">VÍDEO DA EDIÇÃO</span>
+            <h2>Subir vídeo no Google Drive</h2>
+            <p>O arquivo será enviado para uma pasta “MAPA Conteúdos” dentro da conta Google conectada por este usuário.</p>
+
+            {driveState === "checking" && (
+              <div className="integration-loading drive-loading"><LoaderCircle className="spin" size={25} /><strong>Verificando sua conta Google...</strong></div>
+            )}
+
+            {driveStatus?.connected && driveState !== "checking" ? (
+              <form className="drive-upload-form" onSubmit={uploadDriveVideo}>
+                <div className="drive-account">
+                  <span className="drive-account-icon"><FolderOpen size={20} /></span>
+                  <span><strong>{driveStatus.account?.name || "Google Drive conectado"}</strong><small>{driveStatus.account?.email}</small></span>
+                  {driveStatus.folder && <a href={driveStatus.folder.url} target="_blank" rel="noreferrer">Abrir pasta <ExternalLink size={14} /></a>}
+                </div>
+
+                {driveModalContent.driveWebViewLink && (
+                  <a className="drive-current-file" href={driveModalContent.driveWebViewLink} target="_blank" rel="noreferrer">
+                    <Video size={20} />
+                    <span><strong>Vídeo atual</strong><small>{driveModalContent.driveFileName}{driveModalContent.driveFileSize ? ` · ${formatFileSize(driveModalContent.driveFileSize)}` : ""}</small></span>
+                    <ExternalLink size={16} />
+                  </a>
+                )}
+
+                <label className={`video-upload-zone ${driveFile ? "has-file" : ""}`}>
+                  <input
+                    type="file"
+                    accept="video/*"
+                    disabled={driveState === "uploading"}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      setDriveFile(file);
+                      setDriveUploadProgress(0);
+                      setDriveError("");
+                    }}
+                  />
+                  <CloudUpload size={28} />
+                  {driveFile
+                    ? <span><strong>{driveFile.name}</strong><small>{formatFileSize(driveFile.size)} · clique para trocar</small></span>
+                    : <span><strong>Escolher vídeo</strong><small>Selecione o arquivo que será enviado ao seu Drive</small></span>}
+                </label>
+
+                {driveState === "uploading" && (
+                  <div className="upload-progress" aria-live="polite">
+                    <div><span>Enviando diretamente ao Google Drive</span><strong>{driveUploadProgress}%</strong></div>
+                    <span><i style={{ width: `${driveUploadProgress}%` }} /></span>
+                  </div>
+                )}
+                {driveError && <div className="info-note integration-feedback"><Lightbulb size={19} /><p><strong>Atenção:</strong> {driveError}</p></div>}
+                <div className="modal-actions stacked-mobile">
+                  <button type="button" className="button ghost danger" disabled={driveState === "uploading"} onClick={() => void disconnectGoogleDrive()}>Desconectar Drive</button>
+                  <button type="submit" className="button drive-button" disabled={!driveFile || driveState === "uploading"}>
+                    {driveState === "uploading"
+                      ? <><LoaderCircle className="spin" size={18} /> Enviando {driveUploadProgress}%</>
+                      : <><CloudUpload size={18} /> Enviar vídeo ao Drive</>}
+                  </button>
+                </div>
+              </form>
+            ) : driveState !== "checking" && (
+              <>
+                <div className="connection-steps drive-steps">
+                  <div><span>1</span><p><strong>Uma conta por usuário</strong><small>Cada pessoa escolhe e autoriza o próprio Google Drive.</small></p><Users size={18} /></div>
+                  <div><span>2</span><p><strong>Login feito pelo Google</strong><small>A senha Google nunca passa pelo MAPA.</small></p><LockKeyhole size={18} /></div>
+                  <div><span>3</span><p><strong>Pasta organizada</strong><small>Os vídeos ficam na pasta “MAPA Conteúdos”.</small></p><FolderOpen size={18} /></div>
+                </div>
+                {driveError && <div className="info-note integration-feedback"><Lightbulb size={19} /><p><strong>Atenção:</strong> {driveError}</p></div>}
+                <div className="modal-actions">
+                  <button type="button" className="button drive-button" disabled={driveState === "connecting"} onClick={() => void connectGoogleDrive(driveModalContent.id)}>
+                    {driveState === "connecting"
+                      ? <><LoaderCircle className="spin" size={18} /> Abrindo Google...</>
+                      : <><FolderOpen size={18} /> Conectar meu Google Drive</>}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}
@@ -1474,7 +1800,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
   );
 }
 
-function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onDelete, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onDelete: (id: string) => void; onSave: () => void; onAdd: () => void }) {
+function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onDelete, onUploadVideo, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onDelete: (id: string) => void; onUploadVideo: (id: string) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
@@ -1541,6 +1867,9 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
           <div className="editor-title"><span className={`micro-tag ${formatColors[selected.format]}`}>{selected.format}</span><span className={`status-pill status-${selected.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{selected.status}</span></div>
           <div>
             <span className="saved-state"><Check size={15} /> Salvo automaticamente</span>
+            {selected.status === "Edição" && <button type="button" className={`button small ${selected.driveFileId ? "drive-linked" : "drive-button"}`} onClick={() => onUploadVideo(selected.id)}>
+              {selected.driveFileId ? <><FolderOpen size={16} /> Vídeo no Drive</> : <><CloudUpload size={16} /> Subir vídeo</>}
+            </button>}
             <button type="button" className="button danger small" onClick={() => onDelete(selected.id)}><Trash2 size={16} /> Excluir</button>
             {nextStatus && <button type="button" className="button phase-next small" onClick={() => onStatusChange(selected.id, nextStatus)}>
               {selected.status === "Ideia" ? <><Sparkles size={16} /> Transformar em conteúdo</> : <>Avançar para {nextStatus} <ChevronRight size={16} /></>}

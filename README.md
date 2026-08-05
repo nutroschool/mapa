@@ -67,6 +67,31 @@ tabelas de integração não concedem acesso a anon nem authenticated. Insights 
 conta têm disponibilidade histórica limitada pela própria Meta; por isso o
 painel real oferece períodos de 30 e 90 dias.
 
+## Google Drive por usuário
+
+Na fase “Edição”, o botão “Subir vídeo” conecta o Google Drive da própria
+pessoa autenticada. O login e o consentimento acontecem no Google; a senha
+nunca passa pelo MAPA. A integração solicita `drive.file`, cria a pasta “MAPA
+Conteúdos” e só gerencia arquivos criados por este aplicativo.
+
+Configuração:
+
+1. Crie um projeto Google Cloud exclusivo para o MAPA e ative a Google Drive
+   API.
+2. Crie um cliente OAuth 2.0 do tipo Aplicativo da Web e cadastre exatamente:
+   `https://pfiikrpsrcvfofikbloy.supabase.co/functions/v1/google-drive-integration/callback`
+3. Configure no Supabase os segredos `GOOGLE_DRIVE_CLIENT_ID`,
+   `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY` e
+   `MAPA_CANONICAL_APP_URL` listados em `.env.example`.
+4. Aplique a migração `google_drive_integration` e publique a função
+   `google-drive-integration` com a verificação JWT da plataforma desativada. A
+   função valida explicitamente a sessão nas rotas privadas porque o callback
+   OAuth precisa ser público.
+
+Tokens são criptografados com AES-GCM no servidor. O navegador recebe apenas
+uma sessão temporária de upload resumível e envia o vídeo diretamente para o
+Google Drive do usuário, com indicação de progresso.
+
 ## Vercel
 
 O arquivo `vercel.json` seleciona o framework Next.js e executa
@@ -85,6 +110,7 @@ RLS do banco.
 - cliente do Supabase em `lib/supabase.ts`
 - banco e RLS em `supabase/migrations/`
 - integração do Instagram em `supabase/functions/instagram-integration/`
+- integração do Google Drive em `supabase/functions/google-drive-integration/`
 - configuração de implantação em `vercel.json`
 
 ## Useful Commands

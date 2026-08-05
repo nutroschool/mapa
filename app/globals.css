@@ -373,8 +373,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .modal-close { position: absolute; right: 16px; top: 16px; width: 34px; height: 34px; border: 0; border-radius: 9px; display: grid; place-items: center; color: #8b909d; background: #f3f3ef; cursor: pointer; }
 .modal-icon { width: 43px; height: 43px; margin-bottom: 17px; border-radius: 12px; display: grid; place-items: center; }
 .modal-icon.mint { color: #6f7f1b; background: #efffba; }.modal-icon.instagram { color: white; background: linear-gradient(135deg,#7857d6,#cb408e,#ee7142); }
+.modal-icon.drive { color: #2563eb; background: #e9f1ff; }
 .modal-card h2 { margin: 7px 0 4px; font: 800 24px/1.2 var(--font-display); letter-spacing: -.035em; }
-.modal-card > form > p, .instagram-modal > p { margin: 0 0 21px; color: #7c8291; font-size: 11px; }
+.modal-card > form > p, .instagram-modal > p, .drive-modal > p { margin: 0 0 21px; color: #7c8291; font-size: 11px; }
 .modal-form label { display: grid; gap: 6px; margin-top: 14px; color: #626879; font-size: 10px; font-weight: 700; }
 .modal-form input, .modal-form select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid #dedfd8; border-radius: 10px; outline: 0; color: var(--ink); background: #fbfbf8; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -387,6 +388,33 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .connection-steps svg { color: #91a43a; }
 .info-note { margin-top: 14px; padding: 11px 12px; border-radius: 10px; color: #706638; background: #fff8dd; display: flex; gap: 8px; font-size: 9px; }
 .info-note svg { flex: 0 0 auto; color: #c48b21; }.info-note p { margin: 0; }
+.button.drive-button { color: white; border-color: #2563eb; background: #2563eb; box-shadow: 0 7px 18px rgba(37,99,235,.18); }
+.button.drive-button:hover { border-color: #1d4ed8; background: #1d4ed8; }
+.button.drive-linked { color: #2458b6; border-color: #cddcff; background: #edf4ff; }
+.drive-upload-form { display: grid; gap: 14px; }
+.drive-account { min-height: 65px; padding: 10px 12px; border: 1px solid #dce5f5; border-radius: 13px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 11px; background: #f8faff; }
+.drive-account-icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; color: #2563eb; background: #e5efff; }
+.drive-account > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; }
+.drive-account strong { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.drive-account small { overflow: hidden; color: #858b98; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.drive-account a { display: inline-flex; align-items: center; gap: 5px; color: #2563eb; font-size: 11px; font-weight: 700; text-decoration: none; }
+.drive-current-file { min-height: 58px; padding: 11px 13px; border: 1px solid #dce5f5; border-radius: 12px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 11px; color: #2563eb; background: #f8faff; text-decoration: none; }
+.drive-current-file > span { min-width: 0; display: flex; flex-direction: column; }
+.drive-current-file strong { color: var(--ink); font-size: 12px; }
+.drive-current-file small { overflow: hidden; color: #7d8493; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.video-upload-zone { min-height: 145px; padding: 22px; border: 1.5px dashed #b9c9e8; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #4875c4; background: #fbfcff; text-align: center; cursor: pointer; transition: .18s ease; }
+.video-upload-zone:hover, .video-upload-zone.has-file { border-color: #2563eb; background: #f3f7ff; }
+.video-upload-zone input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.video-upload-zone > span { max-width: 100%; display: flex; flex-direction: column; }
+.video-upload-zone strong { overflow: hidden; color: var(--ink); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.video-upload-zone small { margin-top: 3px; color: #858b98; font-size: 11px; }
+.upload-progress { display: grid; gap: 7px; }
+.upload-progress > div { display: flex; justify-content: space-between; gap: 12px; color: #6e7584; font-size: 11px; }
+.upload-progress > div strong { color: #2563eb; }
+.upload-progress > span { height: 7px; overflow: hidden; border-radius: 99px; background: #e7ecf5; }
+.upload-progress i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg,#2563eb,#4f86e9); transition: width .18s ease; }
+.drive-loading { min-height: 180px; gap: 9px; border: 1px solid var(--line); border-radius: 13px; background: #fafaf7; }
+.drive-steps { margin-top: 4px; }
 .toast { position: fixed; z-index: 150; right: 24px; bottom: 24px; min-height: 47px; padding: 0 16px; border-radius: 12px; display: flex; align-items: center; gap: 9px; color: white; background: var(--navy); box-shadow: 0 13px 35px rgba(24,28,43,.25); font-size: 11px; font-weight: 600; animation: toast-in .25s ease-out; }
 .toast svg { color: var(--lime); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
@@ -582,7 +610,8 @@ body { font-size: 16px; }
 .insight-heading h2 { font-size: 19px; }
 
 .modal-card > form > p,
-.instagram-modal > p { font-size: 14px; }
+.instagram-modal > p,
+.drive-modal > p { font-size: 14px; }
 .modal-form label { font-size: 13px; }
 .modal-form input,
 .modal-form select { min-height: 46px; font-size: 15px; }
@@ -726,6 +755,8 @@ body { font-size: 16px; }
   .empty-workspace, .empty-analytics { min-height: 360px; padding-inline: 20px; }
   .connected-instagram-banner { grid-template-columns: auto 1fr; }
   .connected-instagram-banner .button { grid-column: 1 / -1; width: 100%; }
+  .drive-account { grid-template-columns: auto minmax(0,1fr); }
+  .drive-account a { grid-column: 1 / -1; justify-self: stretch; justify-content: center; min-height: 36px; border-radius: 8px; background: #edf4ff; }
 }
 
 /* Authentication -------------------------------------------------------- */
