@@ -52,6 +52,7 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /onDrop=/);
   assert.match(page, /scheduled_date: date/);
   assert.match(page, /FASE DO CONTEÚDO/);
+  assert.match(page, /Transformar em conteúdo/);
   assert.match(page, /Avançar para \{nextStatus\}/);
   assert.match(page, /aria-label="Fase atual da criação do conteúdo"/);
   assert.match(page, /onStatusChange\(selected\.id, status\)/);
@@ -88,6 +89,10 @@ test("uses Supabase Auth and protects cloud content by user", async () => {
 
   assert.match(page, /signInWithPassword/);
   assert.match(page, /auth\.signUp/);
+  assert.match(page, /resetPasswordForEmail/);
+  assert.match(page, /PASSWORD_RECOVERY/);
+  assert.match(page, /updateUser\(\{ password \}\)/);
+  assert.match(page, /Esqueci minha senha/);
   assert.match(page, /from\("content_items"\)/);
   assert.match(page, /crypto\.randomUUID\(\)/);
   assert.match(client, /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
@@ -115,7 +120,7 @@ test("implements real Instagram OAuth and keeps Meta tokens server-side", async 
   assert.match(edgeFunction, /instagram_business_manage_insights/);
   assert.match(edgeFunction, /www\.instagram\.com\/oauth\/authorize/);
   assert.match(edgeFunction, /force_reauth/);
-  assert.doesNotMatch(edgeFunction, /enable_fb_login|force_authentication/);
+  assert.match(edgeFunction, /enable_fb_login/);
   assert.match(edgeFunction, /api\.instagram\.com\/oauth\/access_token/);
   assert.match(edgeFunction, /auth\.getUser\(accessToken\)/);
   assert.match(edgeFunction, /AES-GCM/);
@@ -126,8 +131,10 @@ test("implements real Instagram OAuth and keeps Meta tokens server-side", async 
   assert.match(edgeFunction, /handlePrivacyPage/);
   assert.match(edgeFunction, /token_exchange/);
   assert.match(edgeFunction, /profile_fetch/);
+  assert.match(edgeFunction, /firstDataRecord/);
+  assert.match(edgeFunction, /\$\{graphVersion\}\/me/);
   assert.match(edgeFunction, /safeDiagnostic/);
-  assert.match(edgeFunction, /instagram=error&reason=callback_failed/);
+  assert.match(edgeFunction, /callbackReason/);
   assert.match(migration, /enable row level security/gi);
   assert.match(migration, /revoke all.+anon, authenticated/is);
   assert.match(migration, /grant select, insert, update, delete.+service_role/is);

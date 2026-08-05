@@ -102,6 +102,15 @@ const weekDays = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
 const storageKey = "mapa-content-items-v2";
 const instagramDemoKey = "mapa-instagram-demo-v2";
 const todayIso = "2026-08-04";
+const instagramCallbackMessages: Record<string, string> = {
+  missing_state: "A Meta não devolveu a confirmação de segurança. Inicie a conexão novamente.",
+  invalid_state: "A tentativa de conexão expirou. Inicie novamente e conclua o login em até 10 minutos.",
+  token_exchange: "A Meta não conseguiu validar o código de acesso. Tente conectar novamente.",
+  long_token_exchange: "A Meta não conseguiu concluir a autorização prolongada. Tente novamente.",
+  profile_fetch: "A autorização foi aceita, mas a Meta não liberou os dados da conta profissional. Confirme se a conta é Comercial ou Criador.",
+  connection_save: "A conta foi autorizada, mas o MAPA não conseguiu salvar a conexão. Tente novamente.",
+  callback_failed: "A Meta não concluiu a autorização. Tente novamente.",
+};
 
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "hoje", label: "Hoje", icon: LayoutDashboard },
@@ -288,29 +297,41 @@ function contentToRow(item: ContentItem, userId: string) {
 export default function Home() {
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
   const [user, setUser] = useState<User | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   useEffect(() => {
     if (!supabase) return;
 
     let active = true;
+    const recoveryRequested = window.location.search.includes("auth=recovery")
+      || window.location.hash.includes("type=recovery");
+    const recoveryFrame = recoveryRequested
+      ? window.requestAnimationFrame(() => setPasswordRecovery(true))
+      : 0;
+
     void supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       setUser(data.session?.user ?? null);
       setAuthReady(true);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       setUser(session?.user ?? null);
       setAuthReady(true);
     });
 
     return () => {
       active = false;
+      if (recoveryFrame) window.cancelAnimationFrame(recoveryFrame);
       listener.subscription.unsubscribe();
     };
   }, []);
 
   if (!authReady) return <AppLoading />;
+  if (passwordRecovery) {
+    return <AuthScreen initialMode="reset" onRecoveryComplete={() => setPasswordRecovery(false)} />;
+  }
   if (isSupabaseConfigured && !user) return <AuthScreen />;
 
   return <Workspace user={user} />;
@@ -457,6 +478,7 @@ function Workspace({ user }: { user: User | null }) {
       const params = new URLSearchParams(window.location.search);
       const result = params.get("instagram");
       if (!result) return;
+      const reason = params.get("reason") || "callback_failed";
 
       params.delete("instagram");
       params.delete("reason");
@@ -476,7 +498,7 @@ function Workspace({ user }: { user: User | null }) {
         return;
       }
       setInstagramState("error");
-      setInstagramError("A Meta não concluiu a autorização. Tente novamente.");
+      setInstagramError(instagramCallbackMessages[reason] || instagramCallbackMessages.callback_failed);
       setToast("Não foi possível conectar o Instagram.");
     });
     return () => window.cancelAnimationFrame(frame);
@@ -1081,8 +1103,16 @@ function AppLoading() {
   );
 }
 
-function AuthScreen() {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+type AuthMode = "login" | "signup" | "forgot" | "reset";
+
+function AuthScreen({
+  initialMode = "login",
+  onRecoveryComplete,
+}: {
+  initialMode?: AuthMode;
+  onRecoveryComplete?: () => void;
+}) {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1090,7 +1120,7 @@ function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
-  function changeMode(nextMode: "login" | "signup") {
+  function changeMode(nextMode: AuthMode) {
     setMode(nextMode);
     setPassword("");
     setPasswordConfirmation("");
@@ -1102,6 +1132,47 @@ function AuthScreen() {
     if (!supabase || submitting) return;
 
     const cleanEmail = email.trim().toLowerCase();
+
+    if (mode === "forgot") {
+      if (!cleanEmail) {
+        setFeedback({ tone: "error", text: "Informe o e-mail usado na sua conta." });
+        return;
+      }
+      setSubmitting(true);
+      setFeedback(null);
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: `${window.location.origin}/?auth=recovery`,
+      });
+      setFeedback(error
+        ? { tone: "error", text: "Não foi possível enviar o link agora. Tente novamente em alguns minutos." }
+        : { tone: "success", text: "Enviamos um link de recuperação. Confira sua caixa de entrada e o spam." });
+      setSubmitting(false);
+      return;
+    }
+
+    if (mode === "reset") {
+      if (password.length < 8) {
+        setFeedback({ tone: "error", text: "A nova senha precisa ter pelo menos 8 caracteres." });
+        return;
+      }
+      if (password !== passwordConfirmation) {
+        setFeedback({ tone: "error", text: "As senhas não são iguais." });
+        return;
+      }
+      setSubmitting(true);
+      setFeedback(null);
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        setFeedback({ tone: "error", text: "O link expirou ou não foi reconhecido. Solicite uma nova recuperação." });
+      } else {
+        window.history.replaceState({}, "", window.location.pathname);
+        setFeedback({ tone: "success", text: "Senha atualizada. Seu espaço já está liberado." });
+        window.setTimeout(() => onRecoveryComplete?.(), 900);
+      }
+      setSubmitting(false);
+      return;
+    }
+
     if (!cleanEmail || password.length < 8) {
       setFeedback({ tone: "error", text: "Use um e-mail válido e uma senha com pelo menos 8 caracteres." });
       return;
@@ -1161,21 +1232,49 @@ function AuthScreen() {
         <div className="auth-card">
           <div className="auth-mobile-brand"><span className="brand-mark"><span>M</span></span><strong>MAPA</strong></div>
           <span className="eyebrow">BEM-VINDO AO MAPA</span>
-          <h2>{mode === "login" ? "Entre no seu espaço" : "Crie sua conta"}</h2>
-          <p>{mode === "login" ? "Use seu e-mail e senha para continuar de onde parou." : "Seu espaço começa zerado e será sincronizado com segurança."}</p>
+          <h2>{mode === "login"
+            ? "Entre no seu espaço"
+            : mode === "signup"
+              ? "Crie sua conta"
+              : mode === "forgot"
+                ? "Recupere sua senha"
+                : "Crie uma nova senha"}</h2>
+          <p>{mode === "login"
+            ? "Use seu e-mail e senha para continuar de onde parou."
+            : mode === "signup"
+              ? "Seu espaço começa zerado e será sincronizado com segurança."
+              : mode === "forgot"
+                ? "Digite seu e-mail para receber um link seguro de recuperação."
+                : "Escolha uma nova senha para voltar ao seu espaço."}</p>
 
-          <div className="auth-tabs" aria-label="Tipo de acesso">
+          {mode !== "reset" && <div className="auth-tabs" aria-label="Tipo de acesso">
             <button type="button" className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}><LogIn size={17} /> Entrar</button>
             <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => changeMode("signup")}><UserPlus size={17} /> Criar conta</button>
-          </div>
+          </div>}
 
           <form className="auth-form" onSubmit={submitAuth}>
             {mode === "signup" && <label>Seu nome<div className="auth-input"><UserPlus size={18} /><input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Como podemos chamar você?" /></div></label>}
-            <label>E-mail<div className="auth-input"><Mail size={18} /><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@exemplo.com" /></div></label>
-            <label>Senha<div className="auth-input"><LockKeyhole size={18} /><input type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" /></div></label>
-            {mode === "signup" && <label>Confirme a senha<div className="auth-input"><LockKeyhole size={18} /><input type="password" minLength={8} autoComplete="new-password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} placeholder="Digite a senha novamente" /></div></label>}
+            {mode !== "reset" && <label>E-mail<div className="auth-input"><Mail size={18} /><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@exemplo.com" /></div></label>}
+            {mode !== "forgot" && <label>{mode === "reset" ? "Nova senha" : "Senha"}<div className="auth-input"><LockKeyhole size={18} /><input type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" /></div></label>}
+            {(mode === "signup" || mode === "reset") && <label>Confirme a senha<div className="auth-input"><LockKeyhole size={18} /><input type="password" minLength={8} autoComplete="new-password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} placeholder="Digite a senha novamente" /></div></label>}
+            {mode === "login" && <button type="button" className="auth-recovery-link" onClick={() => changeMode("forgot")}>Esqueci minha senha</button>}
             {feedback && <div className={`auth-feedback ${feedback.tone}`} role="status">{feedback.tone === "success" ? <CheckCircle2 size={18} /> : <CircleHelp size={18} />}<span>{feedback.text}</span></div>}
-            <button className="button primary auth-submit" type="submit" disabled={submitting}>{submitting ? <LoaderCircle className="spin" size={19} /> : mode === "login" ? <LogIn size={19} /> : <UserPlus size={19} />}{submitting ? "Aguarde..." : mode === "login" ? "Entrar no MAPA" : "Criar meu espaço"}</button>
+            <button className="button primary auth-submit" type="submit" disabled={submitting}>{submitting
+              ? <LoaderCircle className="spin" size={19} />
+              : mode === "login"
+                ? <LogIn size={19} />
+                : mode === "signup"
+                  ? <UserPlus size={19} />
+                  : <LockKeyhole size={19} />}{submitting
+              ? "Aguarde..."
+              : mode === "login"
+                ? "Entrar no MAPA"
+                : mode === "signup"
+                  ? "Criar meu espaço"
+                  : mode === "forgot"
+                    ? "Enviar link de recuperação"
+                    : "Salvar nova senha"}</button>
+            {mode === "forgot" && <button type="button" className="auth-back-link" onClick={() => changeMode("login")}><ChevronLeft size={16} /> Voltar para o login</button>}
           </form>
           <small className="auth-privacy">Sua senha é processada pelo Supabase Auth e não fica gravada no código do MAPA.</small>
         </div>
@@ -1443,7 +1542,9 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
           <div>
             <span className="saved-state"><Check size={15} /> Salvo automaticamente</span>
             <button type="button" className="button danger small" onClick={() => onDelete(selected.id)}><Trash2 size={16} /> Excluir</button>
-            {nextStatus && <button type="button" className="button phase-next small" onClick={() => onStatusChange(selected.id, nextStatus)}>Avançar para {nextStatus} <ChevronRight size={16} /></button>}
+            {nextStatus && <button type="button" className="button phase-next small" onClick={() => onStatusChange(selected.id, nextStatus)}>
+              {selected.status === "Ideia" ? <><Sparkles size={16} /> Transformar em conteúdo</> : <>Avançar para {nextStatus} <ChevronRight size={16} /></>}
+            </button>}
             <button className="button primary small" onClick={onSave}><Save size={16} /> Salvar</button>
           </div>
         </div>

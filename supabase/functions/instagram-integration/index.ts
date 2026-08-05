@@ -15,7 +15,7 @@ type ConnectionRow = {
   last_synced_at: string | null;
 };
 
-const graphVersion = Deno.env.get("INSTAGRAM_GRAPH_VERSION") || "v23.0";
+const graphVersion = Deno.env.get("INSTAGRAM_GRAPH_VERSION") || "v25.0";
 const graphBaseUrl = "https://graph.instagram.com";
 const instagramAuthorizeUrl = "https://www.instagram.com/oauth/authorize";
 const instagramTokenUrl = "https://api.instagram.com/oauth/access_token";
@@ -329,6 +329,13 @@ async function metaJson(url: string, accessToken?: string, init?: RequestInit) {
   return payload;
 }
 
+function firstDataRecord(payload: JsonRecord): JsonRecord {
+  const firstItem = Array.isArray(payload.data) ? payload.data[0] : null;
+  return firstItem && typeof firstItem === "object"
+    ? firstItem as JsonRecord
+    : payload;
+}
+
 function safeDiagnostic(value: unknown) {
   const message = value instanceof Error ? value.message : String(value || "unexpected_error");
   return message
@@ -378,6 +385,7 @@ async function handleStart(req: Request, body: JsonRecord) {
   authorizationUrl.searchParams.set("response_type", "code");
   authorizationUrl.searchParams.set("scope", allowedScopes.join(","));
   authorizationUrl.searchParams.set("state", state);
+  authorizationUrl.searchParams.set("enable_fb_login", "false");
   authorizationUrl.searchParams.set("force_reauth", "true");
 
   return json({ authorization_url: authorizationUrl.toString() }, 200, req);
@@ -418,14 +426,14 @@ async function handleCallback(req: Request) {
     redirect_uri: callbackUrl(),
     code,
   });
-  const shortToken = await atStage("token_exchange", () => metaJson(instagramTokenUrl, undefined, {
+  const shortTokenPayload = await atStage("token_exchange", () => metaJson(instagramTokenUrl, undefined, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: tokenForm,
   }));
+  const shortToken = firstDataRecord(shortTokenPayload);
   const shortAccessToken = String(shortToken.access_token || "");
-  const instagramUserId = String(shortToken.user_id || "");
-  if (!shortAccessToken || !instagramUserId) throw new Error("meta_api:invalid_token_response");
+  if (!shortAccessToken) throw new Error("meta_api:invalid_token_response");
 
   const longTokenUrl = new URL(`${graphBaseUrl}/access_token`);
   longTokenUrl.searchParams.set("grant_type", "ig_exchange_token");
@@ -435,12 +443,15 @@ async function handleCallback(req: Request) {
   const accessToken = String(longToken.access_token || shortAccessToken);
   const expiresIn = Number(longToken.expires_in || 3600);
 
-  const profileUrl = new URL(`${graphBaseUrl}/${graphVersion}/${instagramUserId}`);
+  const profileUrl = new URL(`${graphBaseUrl}/${graphVersion}/me`);
   profileUrl.searchParams.set(
     "fields",
     "id,user_id,username,account_type,profile_picture_url,followers_count,media_count",
   );
-  const profile = await atStage("profile_fetch", () => metaJson(profileUrl.toString(), accessToken));
+  const profilePayload = await atStage("profile_fetch", () => metaJson(profileUrl.toString(), accessToken));
+  const profile = firstDataRecord(profilePayload);
+  const instagramUserId = String(profile.user_id || shortToken.user_id || profile.id || "");
+  if (!instagramUserId) throw new Error("profile_fetch:meta_api:missing_instagram_user_id");
 
   await atStage("connection_save", async () => {
     const { error: connectionError } = await admin.from("instagram_connections").upsert({
@@ -579,7 +590,7 @@ async function handleMetrics(req: Request, body: JsonRecord) {
   let accessToken = await decryptToken(connection.access_token_ciphertext);
   accessToken = await maybeRefreshToken(connection, accessToken);
 
-  const profileUrl = new URL(`${graphBaseUrl}/${graphVersion}/${connection.instagram_user_id}`);
+  const profileUrl = new URL(`${graphBaseUrl}/${graphVersion}/me`);
   profileUrl.searchParams.set(
     "fields",
     "id,user_id,username,account_type,profile_picture_url,followers_count,media_count",
@@ -591,10 +602,11 @@ async function handleMetrics(req: Request, body: JsonRecord) {
   );
   mediaUrl.searchParams.set("limit", "50");
 
-  const [profile, mediaPayload] = await Promise.all([
+  const [profilePayload, mediaPayload] = await Promise.all([
     metaJson(profileUrl.toString(), accessToken),
     metaJson(mediaUrl.toString(), accessToken),
   ]);
+  const profile = firstDataRecord(profilePayload);
   const recentMedia = (Array.isArray(mediaPayload.data) ? mediaPayload.data : [])
     .filter((item: JsonRecord) => new Date(String(item.timestamp || 0)).getTime() >= threshold)
     .slice(0, 12);
@@ -696,7 +708,9 @@ Deno.serve(async (req: Request) => {
     const missingEnv = message.startsWith("missing_env:");
     console.error("instagram-integration", safeDiagnostic(message));
     if (req.method === "GET" && route === "callback") {
-      return Response.redirect(appRedirect("/?view=desempenho&instagram=error&reason=callback_failed"), 302);
+      const callbackReason = ["token_exchange", "long_token_exchange", "profile_fetch", "connection_save"]
+        .find((stage) => message.startsWith(`${stage}:`)) || "callback_failed";
+      return Response.redirect(appRedirect(`/?view=desempenho&instagram=error&reason=${callbackReason}`), 302);
     }
     return json({
       error: missingEnv
