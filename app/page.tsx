@@ -31,12 +31,17 @@ import {
   MessageCircle,
   MoreHorizontal,
   PencilLine,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
+  Bold,
+  Palette,
   Save,
   Search,
   Settings2,
   Sparkles,
+  StickyNote,
   Target,
   TrendingUp,
   Users,
@@ -108,6 +113,85 @@ const formatColors: Record<ContentItem["format"], string> = {
   Stories: "amber",
   YouTube: "red",
 };
+
+const scriptBlockDefinitions = [
+  { id: "headline", number: "01", title: "HEADLINE", helper: "A frase que interrompe o scroll", placeholder: "Escreva a headline principal...", rows: 3 },
+  { id: "mystery", number: "02", title: "INTENSIFICADOR DE MISTÉRIO", helper: "Aumente a curiosidade sem entregar a resposta", placeholder: "Crie tensão e abra uma lacuna de curiosidade...", rows: 4 },
+  { id: "saveCta", number: "03", title: "CTA DE SALVAMENTO", helper: "Dê um motivo claro para salvar agora", placeholder: "Convide a pessoa a salvar este conteúdo...", rows: 3 },
+  { id: "notableOne", number: "04", title: "CONTEÚDO NOTÁVEL 1", helper: "Primeiro elemento memorável e útil", placeholder: "Desenvolva o primeiro conteúdo notável...", rows: 5 },
+  { id: "notableTwo", number: "05", title: "CONTEÚDO NOTÁVEL 2", helper: "Aprofunde com uma segunda ideia forte", placeholder: "Desenvolva o segundo conteúdo notável...", rows: 5 },
+  { id: "shareCta", number: "06", title: "CTA DE COMPARTILHAMENTO", helper: "Conecte o tema a alguém que precisa recebê-lo", placeholder: "Convide a pessoa a compartilhar...", rows: 3 },
+  { id: "notableThree", number: "07", title: "CONTEÚDO NOTÁVEL", helper: "Entregue a revelação ou aplicação prática", placeholder: "Entregue a revelação e o valor prático...", rows: 5 },
+  { id: "belief", number: "08", title: "CRENÇA", helper: "A ideia central que deve permanecer", placeholder: "Registre a crença que sustenta a mensagem...", rows: 4 },
+  { id: "presentation", number: "09", title: "APRESENTAÇÃO E CTAs FINAIS", helper: "Apresente-se e feche com a próxima ação", placeholder: "Escreva sua apresentação e os CTAs finais...", rows: 5 },
+  { id: "caption", number: "10", title: "CAPTION PRONTA · LEGENDA", helper: "Legenda final pronta para copiar e publicar", placeholder: "Escreva a legenda completa, incluindo CTA e hashtags...", rows: 7 },
+] as const;
+
+type ScriptBlockId = (typeof scriptBlockDefinitions)[number]["id"];
+type ScriptBlock = { text: string; note: string; bold: boolean; color: string };
+type ScriptDocument = { version: 1; blocks: Record<ScriptBlockId, ScriptBlock> };
+
+const scriptColorPresets = ["#333949", "#b84f3f", "#4770b8", "#7855ad", "#397a57"];
+
+function createEmptyScriptDocument(): ScriptDocument {
+  return {
+    version: 1,
+    blocks: Object.fromEntries(
+      scriptBlockDefinitions.map((definition) => [
+        definition.id,
+        { text: "", note: "", bold: false, color: scriptColorPresets[0] },
+      ]),
+    ) as Record<ScriptBlockId, ScriptBlock>,
+  };
+}
+
+function parseScriptDocument(item: ContentItem): ScriptDocument {
+  const document = createEmptyScriptDocument();
+
+  if (item.script.trim()) {
+    try {
+      const parsed = JSON.parse(item.script) as { version?: unknown; blocks?: Record<string, unknown> };
+      if (parsed.version === 1 && parsed.blocks && typeof parsed.blocks === "object") {
+        scriptBlockDefinitions.forEach((definition) => {
+          const value = parsed.blocks?.[definition.id];
+          if (!value || typeof value !== "object") return;
+          const block = value as Partial<ScriptBlock>;
+          document.blocks[definition.id] = {
+            text: typeof block.text === "string" ? block.text : "",
+            note: typeof block.note === "string" ? block.note : "",
+            bold: block.bold === true,
+            color: typeof block.color === "string" ? block.color : scriptColorPresets[0],
+          };
+        });
+        return document;
+      }
+    } catch {
+      // Roteiros antigos em texto puro são convertidos abaixo.
+    }
+
+    const legacyText = item.script.trim();
+    const headingPattern = /(?:^|\n)\s*(?:BLOCO\s*([1-9])\s*[·.\-–—:]\s*[^\n]+|(?:10\s*[·.\-–—:]\s*)?CAPTION\s+PRONTA(?:\s+LEGENDA)?)\s*\n?/gim;
+    const headings = Array.from(legacyText.matchAll(headingPattern));
+
+    if (headings.length) {
+      headings.forEach((heading, index) => {
+        const blockNumber = heading[1] ? Number(heading[1]) : 10;
+        const definition = scriptBlockDefinitions[blockNumber - 1];
+        if (!definition) return;
+        const start = (heading.index ?? 0) + heading[0].length;
+        const end = headings[index + 1]?.index ?? legacyText.length;
+        document.blocks[definition.id].text = legacyText.slice(start, end).trim();
+      });
+    } else {
+      document.blocks.notableOne.text = legacyText;
+    }
+  }
+
+  if (item.hook.trim() && !document.blocks.headline.text) document.blocks.headline.text = item.hook.trim();
+  if (item.cta.trim() && !document.blocks.presentation.text) document.blocks.presentation.text = item.cta.trim();
+  if (item.notes.trim() && !document.blocks.presentation.note) document.blocks.presentation.note = item.notes.trim();
+  return document;
+}
 
 function formatShortDate(date: string) {
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" })
@@ -184,6 +268,7 @@ function Workspace({ user }: { user: User | null }) {
   const [contents, setContents] = useState<ContentItem[]>(initialContents);
   const [ready, setReady] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [instagramOpen, setInstagramOpen] = useState(false);
   const [instagramDemo, setInstagramDemo] = useState(false);
@@ -637,14 +722,22 @@ function Workspace({ user }: { user: User | null }) {
   };
 
   return (
-    <div className="app-shell">
-      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
+      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         <div className="brand-row">
           <div className="brand-mark"><span>M</span></div>
-          <div>
+          <div className="brand-copy">
             <strong>MAPA</strong>
             <small>conteúdo em movimento</small>
           </div>
+          <button
+            className="icon-button sidebar-toggle"
+            aria-label={sidebarCollapsed ? "Expandir espaço de trabalho" : "Recolher espaço de trabalho"}
+            title={sidebarCollapsed ? "Expandir espaço de trabalho" : "Recolher espaço de trabalho"}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
           <button className="icon-button mobile-close" aria-label="Fechar menu" onClick={() => setMobileMenu(false)}><X size={20} /></button>
         </div>
 
@@ -1122,32 +1215,66 @@ function CalendarView({ contents, onAdd, onSelect }: { contents: ContentItem[]; 
 
 function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [openNotes, setOpenNotes] = useState<Partial<Record<ScriptBlockId, boolean>>>({});
+  const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
   const visibleContents = contents.filter((item) => {
     if (libraryFilter === "Em roteiro") return item.status === "Roteiro";
     if (libraryFilter === "Prontos") return ["Agendado", "Publicado"].includes(item.status);
     return true;
   });
+  const totalWords = scriptBlockDefinitions.reduce((total, definition) => {
+    const text = scriptDocument.blocks[definition.id].text.trim();
+    return total + (text ? text.split(/\s+/).length : 0);
+  }, 0);
+
+  function updateBlock(id: ScriptBlockId, patch: Partial<ScriptBlock>) {
+    const nextDocument: ScriptDocument = {
+      ...scriptDocument,
+      blocks: {
+        ...scriptDocument.blocks,
+        [id]: { ...scriptDocument.blocks[id], ...patch },
+      },
+    };
+    onUpdate("script", JSON.stringify(nextDocument));
+  }
 
   return (
-    <section className="scripts-layout">
-      <aside className="panel script-library">
-        <div className="library-head"><div><span className="eyebrow">BIBLIOTECA</span><h2>Seus conteúdos</h2></div><button className="icon-button dark" aria-label="Novo roteiro" onClick={onAdd}><Plus size={18} /></button></div>
-        <div className="library-filters">
-          {(["Todos", "Em roteiro", "Prontos"] as const).map((filter) => <button key={filter} className={libraryFilter === filter ? "active" : ""} onClick={() => setLibraryFilter(filter)}>{filter}{filter === "Todos" && <span>{contents.length}</span>}</button>)}
-        </div>
-        <div className="library-list">
-          {visibleContents.map((item) => (
-            <button key={item.id} className={item.id === selected.id ? "library-item selected" : "library-item"} onClick={() => onSelect(item.id)}>
-              <span className={`format-icon mini ${formatColors[item.format]}`}>{item.format === "Reel" ? <Play size={15} /> : <FileText size={15} />}</span>
-              <span><strong>{item.title}</strong><small>{item.format} · Salvo no MAPA</small></span>
-              <ChevronRight size={16} />
-            </button>
-          ))}
-          {visibleContents.length === 0 && <div className="library-empty"><FileText size={22} /><strong>Nenhum conteúdo aqui</strong><small>Escolha outro filtro ou adicione uma nova pauta.</small></div>}
-        </div>
+    <section className={`scripts-layout ${libraryCollapsed ? "library-is-collapsed" : ""}`}>
+      <aside className={`panel script-library ${libraryCollapsed ? "library-collapsed" : ""}`}>
+        {libraryCollapsed ? (
+          <div className="library-collapsed-rail">
+            <button className="icon-button" aria-label="Mostrar Seus conteúdos" title="Mostrar Seus conteúdos" onClick={() => setLibraryCollapsed(false)}><PanelLeftOpen size={19} /></button>
+            <span>CONTEÚDOS</span>
+            <button className="icon-button dark" aria-label="Novo roteiro" title="Novo roteiro" onClick={onAdd}><Plus size={18} /></button>
+          </div>
+        ) : (
+          <>
+            <div className="library-head">
+              <div><span className="eyebrow">BIBLIOTECA</span><h2>Seus conteúdos</h2></div>
+              <div className="library-head-actions">
+                <button className="icon-button" aria-label="Ocultar Seus conteúdos" title="Ocultar Seus conteúdos" onClick={() => setLibraryCollapsed(true)}><PanelLeftClose size={18} /></button>
+                <button className="icon-button dark" aria-label="Novo roteiro" title="Novo roteiro" onClick={onAdd}><Plus size={18} /></button>
+              </div>
+            </div>
+            <div className="library-filters">
+              {(["Todos", "Em roteiro", "Prontos"] as const).map((filter) => <button key={filter} className={libraryFilter === filter ? "active" : ""} onClick={() => setLibraryFilter(filter)}>{filter}{filter === "Todos" && <span>{contents.length}</span>}</button>)}
+            </div>
+            <div className="library-list">
+              {visibleContents.map((item) => (
+                <button key={item.id} className={item.id === selected.id ? "library-item selected" : "library-item"} onClick={() => onSelect(item.id)}>
+                  <span className={`format-icon mini ${formatColors[item.format]}`}>{item.format === "Reel" ? <Play size={15} /> : <FileText size={15} />}</span>
+                  <span><strong>{item.title}</strong><small>{item.format} · Salvo no MAPA</small></span>
+                  <ChevronRight size={16} />
+                </button>
+              ))}
+              {visibleContents.length === 0 && <div className="library-empty"><FileText size={22} /><strong>Nenhum conteúdo aqui</strong><small>Escolha outro filtro ou adicione uma nova pauta.</small></div>}
+            </div>
+          </>
+        )}
       </aside>
 
-      <article className="panel editor-panel">
+      <article className="panel editor-panel structured-editor">
         <div className="editor-toolbar">
           <div className="editor-title"><span className={`micro-tag ${formatColors[selected.format]}`}>{selected.format}</span><span className={`status-pill status-${selected.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{selected.status}</span></div>
           <div><span className="saved-state"><Check size={15} /> Salvo automaticamente</span><button className="button primary small" onClick={onSave}><Save size={16} /> Salvar</button></div>
@@ -1155,18 +1282,70 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onSave, onAdd }: 
         <div className="editor-scroll">
           <label className="title-input"><span>TÍTULO</span><input value={selected.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
           <div className="brief-row"><span><CalendarDays size={15} /> {formatShortDate(selected.date)}</span><span><Clock3 size={15} /> {selected.duration}</span><span><Target size={15} /> {selected.pillar}</span></div>
-          <div className="editor-section hook-section">
-            <div className="section-label"><span className="number-badge">01</span><span><strong>Gancho</strong><small>A primeira frase que interrompe o scroll</small></span><Sparkles size={17} /></div>
-            <textarea rows={3} value={selected.hook} onChange={(event) => onUpdate("hook", event.target.value)} placeholder="Escreva aqui a frase de abertura..." />
+          <div className="script-document-summary">
+            <div><Sparkles size={19} /><span><strong>Roteiro magnético em 10 blocos</strong><small>Escreva, formate e acrescente notas em cada etapa.</small></span></div>
+            <span>{totalWords} palavras · aprox. {Math.max(0, Math.ceil(totalWords / 2.2))} segundos</span>
           </div>
-          <div className="editor-section">
-            <div className="section-label"><span className="number-badge">02</span><span><strong>Roteiro</strong><small>Desenvolvimento da ideia em linguagem natural</small></span><FileText size={17} /></div>
-            <textarea className="script-textarea" rows={11} value={selected.script} onChange={(event) => onUpdate("script", event.target.value)} placeholder="Desenvolva o conteúdo principal..." />
-            <div className="word-count">{selected.script.trim() ? selected.script.trim().split(/\s+/).length : 0} palavras · aprox. {Math.max(0, Math.ceil((selected.script.trim() ? selected.script.trim().split(/\s+/).length : 0) / 2.2))} segundos</div>
-          </div>
-          <div className="two-editor-sections">
-            <div className="editor-section compact"><div className="section-label"><span className="number-badge">03</span><span><strong>CTA</strong><small>Próxima ação</small></span></div><textarea rows={4} value={selected.cta} onChange={(event) => onUpdate("cta", event.target.value)} placeholder="O que a pessoa deve fazer?" /></div>
-            <div className="editor-section compact"><div className="section-label"><span className="number-badge">04</span><span><strong>Direção visual</strong><small>Cenas e objetos</small></span></div><textarea rows={4} value={selected.notes} onChange={(event) => onUpdate("notes", event.target.value)} placeholder="Anote cenas, objetos e textos na tela..." /></div>
+
+          <div className="script-blocks">
+            {scriptBlockDefinitions.map((definition) => {
+              const block = scriptDocument.blocks[definition.id];
+              const noteOpen = openNotes[definition.id] ?? Boolean(block.note);
+              return (
+                <section className={`script-block-card ${definition.id === "headline" ? "featured" : ""} ${definition.id === "caption" ? "caption-block" : ""}`} key={definition.id}>
+                  <div className="script-block-header">
+                    <div className="script-block-identity">
+                      <span className="number-badge">{definition.number}</span>
+                      <span><strong>{definition.id === "caption" ? definition.title : `BLOCO ${definition.number} · ${definition.title}`}</strong><small>{definition.helper}</small></span>
+                    </div>
+                    <div className="script-block-tools" aria-label={`Formatação do bloco ${definition.number}`}>
+                      <button
+                        className={`format-tool ${block.bold ? "active" : ""}`}
+                        aria-label={block.bold ? "Remover negrito" : "Deixar bloco em negrito"}
+                        title={block.bold ? "Remover negrito" : "Negrito"}
+                        onClick={() => updateBlock(definition.id, { bold: !block.bold })}
+                      ><Bold size={16} /></button>
+                      <div className="font-colors" aria-label="Cor da fonte">
+                        <Palette size={16} />
+                        {scriptColorPresets.map((color) => (
+                          <button
+                            key={color}
+                            className={block.color.toLowerCase() === color.toLowerCase() ? "color-swatch active" : "color-swatch"}
+                            style={{ backgroundColor: color }}
+                            aria-label={`Usar cor ${color}`}
+                            title={`Cor ${color}`}
+                            onClick={() => updateBlock(definition.id, { color })}
+                          />
+                        ))}
+                        <label className="custom-color" title="Escolher outra cor">
+                          <input type="color" value={block.color} aria-label="Escolher outra cor da fonte" onChange={(event) => updateBlock(definition.id, { color: event.target.value })} />
+                        </label>
+                      </div>
+                      <button
+                        className={`format-tool note-tool ${noteOpen ? "active" : ""}`}
+                        aria-label={noteOpen ? "Ocultar nota do bloco" : "Adicionar nota ao bloco"}
+                        title={noteOpen ? "Ocultar nota" : "Adicionar nota"}
+                        onClick={() => setOpenNotes((notes) => ({ ...notes, [definition.id]: !noteOpen }))}
+                      ><StickyNote size={16} /></button>
+                    </div>
+                  </div>
+                  <textarea
+                    className="script-block-textarea"
+                    rows={definition.rows}
+                    value={block.text}
+                    style={{ color: block.color, fontWeight: block.bold ? 750 : 400 }}
+                    onChange={(event) => updateBlock(definition.id, { text: event.target.value })}
+                    placeholder={definition.placeholder}
+                  />
+                  {noteOpen && (
+                    <div className="block-note">
+                      <StickyNote size={16} />
+                      <textarea rows={2} value={block.note} onChange={(event) => updateBlock(definition.id, { note: event.target.value })} placeholder="Adicione uma nota de gravação, cena, corte ou referência..." />
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
         </div>
       </article>

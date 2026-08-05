@@ -43,6 +43,16 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /onClick=\{\(\) => setLibraryFilter\(filter\)\}/);
   assert.match(page, /onClick=\{onCreateFromInsight\}/);
   assert.match(page, /onAction=\{exportReport\}/);
+  assert.match(page, /INTENSIFICADOR DE MISTÉRIO/);
+  assert.match(page, /APRESENTAÇÃO E CTAs FINAIS/);
+  assert.match(page, /CAPTION PRONTA · LEGENDA/);
+  assert.equal((page.match(/number: "(?:0[1-9]|10)"/g) ?? []).length, 10);
+  assert.match(page, /JSON\.stringify\(nextDocument\)/);
+  assert.match(page, /sidebar-is-collapsed/);
+  assert.match(page, /library-is-collapsed/);
+  assert.match(page, /Deixar bloco em negrito/);
+  assert.match(page, /Escolher outra cor da fonte/);
+  assert.match(page, /Adicionar nota ao bloco/);
 
   const buttonTags = page.match(/<button\b[\s\S]*?>/g) ?? [];
   assert.ok(buttonTags.length > 20);
