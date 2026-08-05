@@ -69,6 +69,16 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /onStatusChange\(selected\.id, status\)/);
   assert.match(page, /Fase: \{item\.status\}/);
   assert.match(page, /voltou à fase anterior/);
+  assert.match(page, /calendar-progress/);
+  assert.match(page, /roteiros no mês/);
+  assert.match(page, /vídeos publicados/);
+  assert.match(page, /statusFilter/);
+  assert.match(page, /calendar-item status-\$\{item\.status/);
+  assert.match(page, /As cores mostram a fase/);
+  assert.match(page, /deleteContent/);
+  assert.match(page, /Esta ação não pode ser desfeita/);
+  assert.match(page, /\.delete\(\)[\s\S]*?\.eq\("user_id", user\.id\)/);
+  assert.match(page, /> Excluir</);
 
   const buttonTags = page.match(/<button\b[\s\S]*?>/g) ?? [];
   assert.ok(buttonTags.length > 20);

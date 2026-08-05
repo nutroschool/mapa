@@ -43,6 +43,7 @@ import {
   Sparkles,
   StickyNote,
   Target,
+  Trash2,
   TrendingUp,
   Users,
   UserPlus,
@@ -593,6 +594,31 @@ function Workspace({ user }: { user: User | null }) {
     announce(`Conteúdo movido para ${formatShortDate(date)}.`);
   }
 
+  async function deleteContent(id: string) {
+    const target = contents.find((item) => item.id === id);
+    if (!target) return;
+    if (!window.confirm(`Excluir “${target.title}”? Esta ação não pode ser desfeita.`)) return;
+
+    if (supabase && user) {
+      const { data, error } = await supabase
+        .from("content_items")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .select("id")
+        .maybeSingle();
+      if (error || !data) {
+        announce("Não foi possível excluir este conteúdo. Tente novamente.");
+        return;
+      }
+    }
+
+    const remaining = contents.filter((item) => item.id !== id);
+    setContents(remaining);
+    if (selectedId === id) setSelectedId(remaining[0]?.id ?? null);
+    announce(`“${target.title}” foi excluído.`);
+  }
+
   function updateSelected(field: keyof ContentItem, value: string) {
     if (!selectedId || field === "id") return;
     const itemId = selectedId;
@@ -910,6 +936,7 @@ function Workspace({ user }: { user: User | null }) {
               onSelect={setSelectedId}
               onUpdate={updateSelected}
               onStatusChange={changeStatus}
+              onDelete={(id) => void deleteContent(id)}
               onSave={() => void saveSelected()}
               onAdd={() => openAdd()}
             />
@@ -1244,7 +1271,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
   const referenceToday = new Date(`${todayIso}T12:00:00`);
   const [month, setMonth] = useState(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1));
   const [filterOpen, setFilterOpen] = useState(false);
-  const [formatFilter, setFormatFilter] = useState<"Todos" | ContentItem["format"]>("Todos");
+  const [statusFilter, setStatusFilter] = useState<"Todas" | Status>("Todas");
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropDate, setDropDate] = useState<string | null>(null);
   const year = month.getFullYear();
@@ -1258,7 +1285,11 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
   });
   const monthNameRaw = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(month);
   const monthName = monthNameRaw.charAt(0).toUpperCase() + monthNameRaw.slice(1);
-  const filteredByFormat = formatFilter === "Todos" ? contents : contents.filter((item) => item.format === formatFilter);
+  const monthPrefix = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+  const monthContents = contents.filter((item) => item.date.startsWith(monthPrefix));
+  const monthlyScripts = monthContents.filter((item) => item.status !== "Ideia" || item.script.trim()).length;
+  const monthlyPublished = monthContents.filter((item) => item.status === "Publicado").length;
+  const filteredByStatus = statusFilter === "Todas" ? contents : contents.filter((item) => item.status === statusFilter);
 
   function changeMonth(offset: number) {
     setMonth(new Date(year, monthIndex + offset, 1));
@@ -1268,10 +1299,14 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
     <section className="panel calendar-panel">
       <div className="calendar-toolbar">
         <div className="month-switcher"><button className="icon-button" aria-label="Mês anterior" onClick={() => changeMonth(-1)}><ChevronLeft size={19} /></button><h2>{monthName} <span>{year}</span></h2><button className="icon-button" aria-label="Próximo mês" onClick={() => changeMonth(1)}><ChevronRight size={19} /></button></div>
+        <div className="calendar-progress" aria-label="Progresso do mês">
+          <div><span className="progress-icon scripts"><FileText size={17} /></span><span><strong>{monthlyScripts}</strong><small>roteiros no mês</small></span></div>
+          <div><span className="progress-icon published"><CheckCircle2 size={17} /></span><span><strong>{monthlyPublished}</strong><small>vídeos publicados</small></span></div>
+        </div>
         <div className="toolbar-actions">
           <div className="filter-wrap">
-            <button className="button ghost small" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><Filter size={16} /> {formatFilter === "Todos" ? "Filtrar" : formatFilter}</button>
-            {filterOpen && <div className="filter-menu">{(["Todos", "Reel", "Carrossel", "Stories", "YouTube"] as const).map((format) => <button key={format} className={formatFilter === format ? "active" : ""} onClick={() => { setFormatFilter(format); setFilterOpen(false); }}>{formatFilter === format && <Check size={14} />}{format}</button>)}</div>}
+            <button className="button ghost small" aria-expanded={filterOpen} onClick={() => setFilterOpen((open) => !open)}><Filter size={16} /> {statusFilter === "Todas" ? "Filtrar fase" : statusFilter}</button>
+            {filterOpen && <div className="filter-menu">{(["Todas", ...statusOrder] as const).map((status) => <button key={status} className={statusFilter === status ? "active" : ""} onClick={() => { setStatusFilter(status); setFilterOpen(false); }}>{statusFilter === status && <Check size={14} />}{status}</button>)}</div>}
           </div>
           <button className="button secondary small" onClick={() => setMonth(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1))}>Hoje</button>
           <button className="button primary small" onClick={() => onAdd()}><Plus size={16} /> Adicionar</button>
@@ -1282,7 +1317,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
         {slots.map((day, index) => {
           if (!day) return <div className="day-cell outside" key={`blank-${index}`} />;
           const date = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-          const dayItems = filteredByFormat.filter((item) => item.date === date);
+          const dayItems = filteredByStatus.filter((item) => item.date === date);
           return (
             <div
               className={`day-cell ${date === todayIso ? "current-day" : ""} ${dropDate === date ? "drop-target" : ""}`}
@@ -1313,10 +1348,10 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
                 {dayItems.slice(0, 3).map((item) => (
                   <button
                     key={item.id}
-                    className={`calendar-item ${formatColors[item.format]} ${draggedId === item.id ? "dragging" : ""}`}
+                    className={`calendar-item status-${item.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")} ${draggedId === item.id ? "dragging" : ""}`}
                     draggable
                     aria-grabbed={draggedId === item.id}
-                    title="Arraste para outro dia ou clique para abrir"
+                    title={`${item.status}: arraste para outro dia ou clique para abrir`}
                     onClick={() => onSelect(item.id)}
                     onDragStart={(event) => {
                       event.dataTransfer.effectAllowed = "move";
@@ -1327,7 +1362,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
                       setDraggedId(null);
                       setDropDate(null);
                     }}
-                  ><span>{item.format === "Reel" ? <Play size={11} fill="currentColor" /> : <FileText size={11} />}</span><strong>{item.title}</strong></button>
+                  ><span className="calendar-phase-number">{statusOrder.indexOf(item.status) + 1}</span><strong>{item.title}</strong></button>
                 ))}
               </div>
               {dayItems.length === 0 && <button className="day-add" aria-label={`Adicionar conteúdo em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={14} /></button>}
@@ -1335,12 +1370,12 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
           );
         })}
       </div>
-      <div className="calendar-legend"><span><i className="coral" /> Reel</span><span><i className="violet" /> Carrossel</span><span><i className="amber" /> Stories</span><span><i className="red" /> YouTube</span><small>Arraste um conteúdo para outro dia. Dê dois cliques para adicionar uma pauta.</small></div>
+      <div className="calendar-legend">{statusOrder.map((status) => <span key={status}><i className={`status-${status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`} /> {status}</span>)}<small>As cores mostram a fase. Arraste um conteúdo para mudar o dia.</small></div>
     </section>
   );
 }
 
-function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onSave: () => void; onAdd: () => void }) {
+function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onDelete, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onDelete: (id: string) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
@@ -1407,6 +1442,7 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
           <div className="editor-title"><span className={`micro-tag ${formatColors[selected.format]}`}>{selected.format}</span><span className={`status-pill status-${selected.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{selected.status}</span></div>
           <div>
             <span className="saved-state"><Check size={15} /> Salvo automaticamente</span>
+            <button type="button" className="button danger small" onClick={() => onDelete(selected.id)}><Trash2 size={16} /> Excluir</button>
             {nextStatus && <button type="button" className="button phase-next small" onClick={() => onStatusChange(selected.id, nextStatus)}>Avançar para {nextStatus} <ChevronRight size={16} /></button>}
             <button className="button primary small" onClick={onSave}><Save size={16} /> Salvar</button>
           </div>
