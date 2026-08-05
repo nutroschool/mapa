@@ -19,6 +19,8 @@ const graphVersion = Deno.env.get("INSTAGRAM_GRAPH_VERSION") || "v23.0";
 const graphBaseUrl = "https://graph.instagram.com";
 const instagramAuthorizeUrl = "https://www.instagram.com/oauth/authorize";
 const instagramTokenUrl = "https://api.instagram.com/oauth/access_token";
+const productionAppUrl = "https://mapa.nutroschool.com.br";
+const legacyAppUrl = "https://mapa-conteudo-jose.jose21.chatgpt.site";
 const allowedScopes = [
   "instagram_business_basic",
   "instagram_business_manage_insights",
@@ -42,6 +44,8 @@ function corsHeaders(req?: Request) {
     .filter(Boolean);
   const allowedOrigins = new Set([
     ...configuredOrigins,
+    productionAppUrl,
+    legacyAppUrl,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
   ]);
@@ -150,7 +154,7 @@ function safeRedirectPath(value: unknown) {
 }
 
 function appRedirect(path: string) {
-  const appUrl = requireEnv("MAPA_APP_URL").replace(/\/$/, "");
+  const appUrl = (Deno.env.get("MAPA_CANONICAL_APP_URL") || productionAppUrl).replace(/\/$/, "");
   return new URL(path, `${appUrl}/`).toString();
 }
 
