@@ -146,10 +146,12 @@ test("implements real Instagram OAuth and keeps Meta tokens server-side", async 
 });
 
 test("connects each user to Google Drive and uploads editing videos securely", async () => {
-  const [page, driveClient, edgeFunction, migration, envExample] = await Promise.all([
+  const [page, styles, driveClient, edgeFunction, callbackRoute, migration, envExample] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/google-drive.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/functions/google-drive-integration/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/google-drive/callback/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260805155654_google_drive_integration.sql", import.meta.url), "utf8"),
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
@@ -165,6 +167,8 @@ test("connects each user to Google Drive and uploads editing videos securely", a
   assert.match(driveClient, /create-upload-session/);
   assert.match(edgeFunction, /auth\.getUser\(accessToken\)/);
   assert.match(edgeFunction, /https:\/\/www\.googleapis\.com\/auth\/drive\.file/);
+  assert.match(edgeFunction, /scope_validation:missing_drive_file/);
+  assert.match(edgeFunction, /GOOGLE_DRIVE_OAUTH_REDIRECT_URI/);
   assert.match(edgeFunction, /uploadType", "resumable"/);
   assert.match(edgeFunction, /AES-GCM/);
   assert.match(edgeFunction, /\.eq\("user_id", user\.id\)/);
@@ -172,6 +176,11 @@ test("connects each user to Google Drive and uploads editing videos securely", a
   assert.match(migration, /enable row level security/gi);
   assert.match(migration, /revoke all.+anon, authenticated/is);
   assert.match(migration, /drive_file_id/);
+  assert.match(callbackRoute, /mapa\.nutroschool\.com\.br/);
+  assert.match(callbackRoute, /google-drive-integration\/callback/);
+  assert.match(callbackRoute, /redirect:\s*"manual"/);
+  assert.match(styles, /\.drive-modal, \.drive-upload-form \{ min-width: 0; max-width: 100%; \}/);
+  assert.match(styles, /overflow-wrap: anywhere/);
   assert.doesNotMatch(page + driveClient, /GOOGLE_DRIVE_CLIENT_SECRET|GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY/);
   assert.doesNotMatch(envExample, /GOOGLE_DRIVE_CLIENT_SECRET=\S{20,}/);
 });
@@ -183,4 +192,25 @@ test("uses the current Sao Paulo date instead of a fixed day", async () => {
   assert.match(page, /formatTodayHeading\(todayIso\)/);
   assert.doesNotMatch(page, /2026-08-04/);
   assert.doesNotMatch(page, /TERÇA-FEIRA, 4 DE AGOSTO/);
+});
+
+test("opens a complete teleprompter from the recording phase", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /selected\.status === "Gravação"/);
+  assert.match(page, /Abrir teleprompter/);
+  assert.match(page, /definition\.id !== "caption"/);
+  assert.match(page, /requestAnimationFrame\(tick\)/);
+  assert.match(page, /Velocidade/);
+  assert.match(page, /Espelhar/);
+  assert.match(page, /Tela cheia/);
+  assert.match(page, /event\.code === "Space"/);
+  assert.match(page, /reader\.scrollTop \+= speed/);
+  assert.match(styles, /\.teleprompter-layer/);
+  assert.match(styles, /\.teleprompter-reader\.mirrored/);
+  assert.match(styles, /\.teleprompter-focus-line/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.teleprompter-controls/);
 });
