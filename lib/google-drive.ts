@@ -10,6 +10,8 @@ export type GoogleDriveConnectionState =
 
 export type GoogleDriveStatus = {
   connected: boolean;
+  requires_reconnect?: boolean;
+  reason?: "drive_scope_missing";
   account?: {
     email: string;
     name: string | null;
@@ -72,7 +74,7 @@ function putVideo(uploadUrl: string, file: File, onProgress: (progress: number) 
     });
     request.addEventListener("load", () => {
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error("O Google Drive não concluiu o envio do vídeo."));
+        reject(new Error(`O Google Drive não concluiu o envio do vídeo (erro ${request.status}).`));
         return;
       }
       try {
