@@ -33,6 +33,9 @@ import {
   Menu,
   MessageCircle,
   MoreHorizontal,
+  Maximize2,
+  Minus,
+  Pause,
   PencilLine,
   PanelLeftClose,
   PanelLeftOpen,
@@ -46,11 +49,14 @@ import {
   Sparkles,
   StickyNote,
   Target,
+  Type,
   Trash2,
   TrendingUp,
   Users,
   UserPlus,
   Video,
+  RotateCcw,
+  FlipHorizontal2,
   X,
   Zap,
 } from "lucide-react";
@@ -159,9 +165,11 @@ const googleDriveCallbackMessages: Record<string, string> = {
   missing_state: "O Google não devolveu a confirmação de segurança. Inicie a conexão novamente.",
   invalid_state: "A tentativa de conexão expirou. Inicie novamente e conclua em até 10 minutos.",
   token_exchange: "O Google não conseguiu validar a autorização. Tente conectar novamente.",
+  scope_validation: "O Google Drive foi conectado sem a permissão para enviar vídeos. Conecte novamente e autorize o acesso solicitado.",
   profile_fetch: "A conta foi autorizada, mas o Google não liberou a identificação necessária.",
   connection_save: "A conta foi autorizada, mas o MAPA não conseguiu salvar a conexão.",
   folder_setup: "A conta foi conectada, mas a pasta MAPA Conteúdos não pôde ser preparada.",
+  callback_proxy: "O MAPA não conseguiu concluir o retorno do Google. Tente conectar novamente.",
   callback_failed: "O Google Drive não concluiu a autorização. Tente novamente.",
 };
 
@@ -496,6 +504,9 @@ function Workspace({ user }: { user: User | null }) {
       const status = await invokeGoogleDrive<GoogleDriveStatus>({ action: "status" });
       setDriveStatus(status);
       setDriveState(status.connected ? "connected" : "disconnected");
+      if (status.requires_reconnect) {
+        setDriveError("Reconecte seu Google Drive para autorizar o envio de vídeos.");
+      }
     } catch (error) {
       setDriveStatus(null);
       setDriveState("error");
@@ -884,7 +895,9 @@ function Workspace({ user }: { user: User | null }) {
     setDriveModalContentId(contentId);
     setDriveFile(null);
     setDriveUploadProgress(0);
-    setDriveError("");
+    setDriveError(driveStatus?.requires_reconnect
+      ? "Reconecte seu Google Drive para autorizar o envio de vídeos."
+      : "");
     if (driveState === "error") void loadGoogleDriveStatus();
   }
 
@@ -1803,6 +1816,8 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
 function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onDelete, onUploadVideo, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onDelete: (id: string) => void; onUploadVideo: (id: string) => void; onSave: () => void; onAdd: () => void }) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [teleprompterOpen, setTeleprompterOpen] = useState(false);
+  const closeTeleprompter = useCallback(() => setTeleprompterOpen(false), []);
   const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
   const currentStatusIndex = statusOrder.indexOf(selected.status);
   const nextStatus = statusOrder[currentStatusIndex + 1];
@@ -1815,6 +1830,14 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
     const text = richTextToPlainText(scriptDocument.blocks[definition.id].html);
     return total + (text ? text.split(/\s+/).length : 0);
   }, 0);
+  const teleprompterSections = scriptBlockDefinitions
+    .filter((definition) => definition.id !== "caption")
+    .map((definition) => ({
+      id: definition.id,
+      title: definition.title,
+      text: richTextToPlainText(scriptDocument.blocks[definition.id].html).trim(),
+    }))
+    .filter((section) => section.text);
 
   function updateBlock(id: ScriptBlockId, patch: Partial<ScriptBlock>) {
     const nextDocument: ScriptDocument = {
@@ -1867,6 +1890,9 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
           <div className="editor-title"><span className={`micro-tag ${formatColors[selected.format]}`}>{selected.format}</span><span className={`status-pill status-${selected.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{selected.status}</span></div>
           <div>
             <span className="saved-state"><Check size={15} /> Salvo automaticamente</span>
+            {selected.status === "Gravação" && <button type="button" className="button teleprompter-button small" onClick={() => setTeleprompterOpen(true)}>
+              <Video size={16} /> Abrir teleprompter
+            </button>}
             {selected.status === "Edição" && <button type="button" className={`button small ${selected.driveFileId ? "drive-linked" : "drive-button"}`} onClick={() => onUploadVideo(selected.id)}>
               {selected.driveFileId ? <><FolderOpen size={16} /> Vídeo no Drive</> : <><CloudUpload size={16} /> Subir vídeo</>}
             </button>}
@@ -1914,7 +1940,144 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
           </div>
         </div>
       </article>
+      {teleprompterOpen && (
+        <Teleprompter
+          title={selected.title}
+          sections={teleprompterSections}
+          onClose={closeTeleprompter}
+        />
+      )}
     </section>
+  );
+}
+
+function Teleprompter({ title, sections, onClose }: { title: string; sections: { id: string; title: string; text: string }[]; onClose: () => void }) {
+  const shellRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<number | null>(null);
+  const previousTimeRef = useRef<number | null>(null);
+  const progressRef = useRef(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(34);
+  const [fontSize, setFontSize] = useState(54);
+  const [mirrored, setMirrored] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const hasScript = sections.length > 0;
+
+  const restart = useCallback(() => {
+    const reader = readerRef.current;
+    if (reader) reader.scrollTo({ top: 0, behavior: "smooth" });
+    progressRef.current = 0;
+    setProgress(0);
+    setPlaying(false);
+  }, []);
+
+  useEffect(() => {
+    if (!playing) {
+      previousTimeRef.current = null;
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+      return;
+    }
+
+    function tick(time: number) {
+      const reader = readerRef.current;
+      if (!reader) return;
+      const previous = previousTimeRef.current ?? time;
+      previousTimeRef.current = time;
+      reader.scrollTop += speed * ((time - previous) / 1000);
+      const maximum = Math.max(0, reader.scrollHeight - reader.clientHeight);
+      const nextProgress = maximum ? Math.min(100, (reader.scrollTop / maximum) * 100) : 100;
+      const roundedProgress = Math.round(nextProgress);
+      if (roundedProgress !== progressRef.current) {
+        progressRef.current = roundedProgress;
+        setProgress(roundedProgress);
+      }
+      if (maximum > 0 && reader.scrollTop >= maximum - 1) {
+        setPlaying(false);
+        return;
+      }
+      frameRef.current = requestAnimationFrame(tick);
+    }
+
+    frameRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+  }, [playing, speed]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.code === "Space" && !event.repeat) {
+        event.preventDefault();
+        setPlaying((value) => !value);
+      }
+      if (event.key === "ArrowUp") setSpeed((value) => Math.min(90, value + 4));
+      if (event.key === "ArrowDown") setSpeed((value) => Math.max(10, value - 4));
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => () => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+  }, []);
+
+  async function toggleFullscreen() {
+    const shell = shellRef.current;
+    if (!shell) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await shell.requestFullscreen();
+    } catch {
+      // A interface já ocupa toda a janela quando o navegador bloqueia o modo imersivo.
+    }
+  }
+
+  return (
+    <div className="teleprompter-layer" role="dialog" aria-modal="true" aria-label={`Teleprompter de ${title}`} ref={shellRef}>
+      <header className="teleprompter-header">
+        <div className="teleprompter-title"><span><Video size={19} /></span><div><small>TELEPROMPTER · GRAVAÇÃO</small><strong>{title}</strong></div></div>
+        <div className="teleprompter-progress" aria-label={`Progresso ${Math.round(progress)}%`}><span><i style={{ width: `${progress}%` }} /></span><em>{Math.round(progress)}%</em></div>
+        <button className="teleprompter-close" type="button" onClick={onClose} aria-label="Fechar teleprompter"><X size={22} /></button>
+      </header>
+
+      <main className={`teleprompter-reader ${mirrored ? "mirrored" : ""}`} ref={readerRef} onScroll={() => {
+        const reader = readerRef.current;
+        if (!reader) return;
+        const maximum = Math.max(0, reader.scrollHeight - reader.clientHeight);
+        const nextProgress = Math.round(maximum ? Math.min(100, (reader.scrollTop / maximum) * 100) : 0);
+        if (nextProgress !== progressRef.current) {
+          progressRef.current = nextProgress;
+          setProgress(nextProgress);
+        }
+      }}>
+        <div className="teleprompter-spacer" />
+        {hasScript ? (
+          <div className="teleprompter-copy" style={{ fontSize: `${fontSize}px` }}>
+            {sections.map((section) => <p key={section.id}>{section.text}</p>)}
+          </div>
+        ) : (
+          <div className="teleprompter-empty"><FileText size={32} /><strong>Este roteiro ainda está vazio</strong><p>Volte ao editor, preencha os blocos e abra o teleprompter novamente.</p></div>
+        )}
+        <div className="teleprompter-spacer end" />
+      </main>
+
+      <div className="teleprompter-focus-line" aria-hidden="true"><span /></div>
+      <footer className="teleprompter-controls">
+        <button type="button" className="teleprompter-secondary" onClick={restart}><RotateCcw size={18} /><span>Reiniciar</span></button>
+        <label className="teleprompter-speed"><span>Velocidade</span><input type="range" min="10" max="90" step="2" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} /><strong>{speed}</strong></label>
+        <button type="button" className="teleprompter-play" disabled={!hasScript} onClick={() => setPlaying((value) => !value)}>{playing ? <><Pause size={23} /> Pausar</> : <><Play size={23} /> Iniciar</>}</button>
+        <div className="teleprompter-font" aria-label="Tamanho da letra"><Type size={18} /><button type="button" onClick={() => setFontSize((value) => Math.max(30, value - 4))} aria-label="Diminuir letra"><Minus size={17} /></button><strong>{fontSize}</strong><button type="button" onClick={() => setFontSize((value) => Math.min(90, value + 4))} aria-label="Aumentar letra"><Plus size={17} /></button></div>
+        <button type="button" className={`teleprompter-secondary ${mirrored ? "active" : ""}`} onClick={() => setMirrored((value) => !value)}><FlipHorizontal2 size={18} /><span>Espelhar</span></button>
+        <button type="button" className="teleprompter-secondary" onClick={() => void toggleFullscreen()}><Maximize2 size={18} /><span>Tela cheia</span></button>
+      </footer>
+      <div className="teleprompter-shortcuts">Espaço: iniciar/pausar · ↑ ↓: velocidade · Esc: fechar</div>
+    </div>
   );
 }
 
