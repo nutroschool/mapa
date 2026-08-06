@@ -24,10 +24,11 @@ const googleUserInfoUrl = "https://openidconnect.googleapis.com/v1/userinfo";
 const driveApiUrl = "https://www.googleapis.com/drive/v3";
 const driveUploadApiUrl = "https://www.googleapis.com/upload/drive/v3";
 const driveFolderName = "MAPA Conteúdos";
+const driveFileScope = "https://www.googleapis.com/auth/drive.file";
 const allowedScopes = [
   "openid",
   "email",
-  "https://www.googleapis.com/auth/drive.file",
+  driveFileScope,
 ];
 
 function corsHeaders(req?: Request) {
@@ -162,7 +163,12 @@ function appRedirect(path: string) {
 }
 
 function callbackUrl() {
-  return `${requireEnv("SUPABASE_URL")}/functions/v1/google-drive-integration/callback`;
+  return Deno.env.get("GOOGLE_DRIVE_OAUTH_REDIRECT_URI")?.trim()
+    || `${productionAppUrl}/api/google-drive/callback`;
+}
+
+function hasDriveFileScope(scopes: string[]) {
+  return scopes.includes(driveFileScope);
 }
 
 function safeDiagnostic(value: unknown) {
@@ -365,6 +371,10 @@ async function handleCallback(req: Request) {
   const refreshToken = String(tokenPayload.refresh_token || "");
   const expiresIn = Number(tokenPayload.expires_in || 3600);
   if (!accessToken) throw new Error("token_exchange:google_api:invalid_token_response");
+  const grantedScopes = String(tokenPayload.scope || "").split(/\s+/).filter(Boolean);
+  if (!hasDriveFileScope(grantedScopes)) {
+    throw new Error("scope_validation:missing_drive_file");
+  }
 
   const profile = await atStage("profile_fetch", () => googleJson(googleUserInfoUrl, accessToken));
   const googleUserId = String(profile.sub || "");
@@ -385,7 +395,7 @@ async function handleCallback(req: Request) {
       google_name: profile.name ? String(profile.name) : null,
       access_token_ciphertext: await encryptToken(accessToken),
       refresh_token_ciphertext: refreshTokenCiphertext,
-      granted_scopes: String(tokenPayload.scope || allowedScopes.join(" ")).split(/\s+/).filter(Boolean),
+      granted_scopes: grantedScopes,
       token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
       folder_id: existingConnection?.google_user_id === googleUserId
         ? existingConnection.folder_id
@@ -408,6 +418,13 @@ async function handleStatus(req: Request) {
   if (!user) return json({ error: "Sessão inválida." }, 401, req);
   const connection = await loadConnection(user.id);
   if (!connection) return json({ connected: false }, 200, req);
+  if (!hasDriveFileScope(connection.granted_scopes)) {
+    return json({
+      connected: false,
+      requires_reconnect: true,
+      reason: "drive_scope_missing",
+    }, 200, req);
+  }
 
   return json({
     connected: true,
@@ -454,6 +471,12 @@ async function handleCreateUploadSession(req: Request, body: JsonRecord) {
 
   const connection = await loadConnection(user.id);
   if (!connection) return json({ error: "Conecte seu Google Drive antes de enviar o vídeo.", code: "drive_not_connected" }, 409, req);
+  if (!hasDriveFileScope(connection.granted_scopes)) {
+    return json({
+      error: "Reconecte seu Google Drive para autorizar o envio de vídeos.",
+      code: "drive_scope_missing",
+    }, 409, req);
+  }
   const accessToken = await usableAccessToken(connection);
   const folderId = await ensureDriveFolder(connection, accessToken);
 
@@ -588,12 +611,18 @@ Deno.serve(async (req: Request) => {
     console.error("google-drive-integration", safeDiagnostic(message));
     const missingEnv = message.startsWith("missing_env:");
     if (req.method === "GET" && route === "callback") {
-      const callbackReason = ["token_exchange", "profile_fetch", "connection_save", "folder_setup"]
+      const callbackReason = ["token_exchange", "scope_validation", "profile_fetch", "connection_save", "folder_setup"]
         .find((stage) => message.startsWith(`${stage}:`)) || "callback_failed";
       return Response.redirect(appRedirect(`/?view=roteiros&drive=error&reason=${callbackReason}`), 302);
     }
     if (message.includes("google_reconnect_required") || message.includes("invalid_grant")) {
       return json({ error: "A autorização do Google Drive expirou. Conecte sua conta novamente.", code: "drive_reconnect_required" }, 401, req);
+    }
+    if (message.includes("insufficientPermissions") || message.includes("insufficient_scope")) {
+      return json({
+        error: "Reconecte seu Google Drive para autorizar o envio de vídeos.",
+        code: "drive_scope_missing",
+      }, 409, req);
     }
     return json({
       error: missingEnv
