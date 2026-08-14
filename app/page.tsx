@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   BarChart3,
   Bell,
-  Bookmark,
   CalendarDays,
   CalendarPlus,
   Check,
@@ -14,13 +13,12 @@ import {
   CircleHelp,
   CloudUpload,
   Clock3,
-  Eye,
   ExternalLink,
   FileText,
   Filter,
   FolderOpen,
   GripVertical,
-  Heart,
+  Inbox,
   Instagram,
   LayoutDashboard,
   Lightbulb,
@@ -36,7 +34,6 @@ import {
   Maximize2,
   Minus,
   Pause,
-  PencilLine,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -75,11 +72,22 @@ import {
   type GoogleDriveStatus,
 } from "@/lib/google-drive";
 import InstagramPerformance from "@/components/InstagramPerformance";
+import CaptureInbox from "@/components/CaptureInbox";
+import PasswordSettings from "@/components/PasswordSettings";
+import ScriptInspirationPanel from "@/components/ScriptInspirationPanel";
+import type { CaptureItem } from "@/lib/capture-inbox";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
-type View = "hoje" | "calendario" | "roteiros" | "desempenho";
+type View = "hoje" | "calendario" | "roteiros" | "inbox" | "desempenho";
 type Status = "Ideia" | "Roteiro" | "Gravação" | "Edição" | "Agendado" | "Publicado";
 type FunnelStage = "Topo de funil" | "Meio de funil" | "Fundo de funil";
+
+type WorkspaceInstagramAccount = {
+  id: string;
+  username: string;
+  label: string;
+  source: "manual" | "connected" | "demo";
+};
 
 type ContentItem = {
   id: string;
@@ -93,6 +101,7 @@ type ContentItem = {
   script: string;
   cta: string;
   notes: string;
+  instagramAccountId: string | null;
   driveFileId: string | null;
   driveFileName: string | null;
   driveWebViewLink: string | null;
@@ -113,6 +122,7 @@ type ContentRow = {
   script: string;
   cta: string;
   notes: string;
+  instagram_account_id: string | null;
   drive_file_id: string | null;
   drive_file_name: string | null;
   drive_web_view_link: string | null;
@@ -128,6 +138,8 @@ const funnelStages: FunnelStage[] = ["Topo de funil", "Meio de funil", "Fundo de
 const weekDays = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
 const storageKey = "mapa-content-items-v2";
 const instagramDemoKey = "mapa-instagram-demo-v2";
+const instagramAccountsKey = "mapa-instagram-workspace-accounts-v1";
+const instagramAssignmentsKey = "mapa-content-instagram-assignments-v1";
 const appTimeZone = "America/Sao_Paulo";
 
 function dateIsoInTimeZone(date = new Date()) {
@@ -177,6 +189,7 @@ const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "hoje", label: "Hoje", icon: LayoutDashboard },
   { id: "calendario", label: "Calendário", icon: CalendarDays },
   { id: "roteiros", label: "Roteiros", icon: FileText },
+  { id: "inbox", label: "Capturas", icon: Inbox },
   { id: "desempenho", label: "Desempenho", icon: BarChart3 },
 ];
 
@@ -186,6 +199,10 @@ const formatColors: Record<ContentItem["format"], string> = {
   Stories: "amber",
   YouTube: "red",
 };
+
+function kindLabelForCapture(kind: CaptureItem["kind"]) {
+  return ({ audio: "Áudio", link: "Link", image: "Print", text: "Texto", pdf: "PDF" })[kind];
+}
 
 const scriptBlockDefinitions = [
   { id: "headline", number: "01", title: "HEADLINE", helper: "A frase que interrompe o scroll", placeholder: "Escreva a headline principal...", rows: 3 },
@@ -343,6 +360,7 @@ function rowToContent(row: ContentRow): ContentItem {
     script: row.script,
     cta: row.cta,
     notes: row.notes,
+    instagramAccountId: row.instagram_account_id,
     driveFileId: row.drive_file_id,
     driveFileName: row.drive_file_name,
     driveWebViewLink: row.drive_web_view_link,
@@ -366,6 +384,7 @@ function contentToRow(item: ContentItem, userId: string) {
     script: item.script,
     cta: item.cta,
     notes: item.notes,
+    instagram_account_id: item.instagramAccountId,
     drive_file_id: item.driveFileId,
     drive_file_name: item.driveFileName,
     drive_web_view_link: item.driveWebViewLink,
@@ -426,7 +445,13 @@ function Workspace({ user }: { user: User | null }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [instagramOpen, setInstagramOpen] = useState(false);
+  const [instagramAccountsOpen, setInstagramAccountsOpen] = useState(false);
   const [instagramDemo, setInstagramDemo] = useState(false);
+  const [workspaceInstagramAccounts, setWorkspaceInstagramAccounts] = useState<WorkspaceInstagramAccount[]>([]);
+  const workspaceInstagramAccountsRef = useRef<WorkspaceInstagramAccount[]>([]);
+  const [instagramAccountsReady, setInstagramAccountsReady] = useState(false);
+  const [performanceAccountId, setPerformanceAccountId] = useState("");
+  const [accountDraft, setAccountDraft] = useState({ username: "", label: "" });
   const [instagramState, setInstagramState] = useState<InstagramConnectionState>("checking");
   const [instagramAccount, setInstagramAccount] = useState<InstagramAccount | null>(null);
   const [instagramMetrics, setInstagramMetrics] = useState<InstagramMetrics | null>(null);
@@ -440,18 +465,57 @@ function Workspace({ user }: { user: User | null }) {
   const [driveUploadProgress, setDriveUploadProgress] = useState(0);
   const [driveError, setDriveError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [utilityModal, setUtilityModal] = useState<"help" | "notifications" | "profile" | null>(null);
+  const [utilityModal, setUtilityModal] = useState<"help" | "notifications" | "profile" | "settings" | null>(null);
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
+  const [inboxComposerToken, setInboxComposerToken] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const saveTimersRef = useRef<Record<string, number>>({});
+  const workspaceId = user?.id || "local";
   const [newItem, setNewItem] = useState({
     title: "",
     format: "Reel" as ContentItem["format"],
     pillar: "Topo de funil" as FunnelStage,
     date: todayIso,
     status: "Ideia" as Status,
+    instagramAccountId: "",
   });
+
+  const rememberConnectedInstagramAccount = useCallback((connectedAccount: InstagramAccount) => {
+    const normalizedUsername = connectedAccount.username.replace(/^@/, "").trim();
+    const existingAccount = workspaceInstagramAccountsRef.current.find((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase());
+    const connectedAccountId = existingAccount?.id || `connected:${normalizedUsername.toLowerCase()}`;
+    setPerformanceAccountId((current) => current || connectedAccountId);
+    setWorkspaceInstagramAccounts((accounts) => {
+      const existing = accounts.find((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase());
+      if (existing) {
+        if (existing.source === "connected") return accounts;
+        return accounts.map((item) => item.id === existing.id ? { ...item, source: "connected" } : item);
+      }
+      const nextAccount: WorkspaceInstagramAccount = {
+        id: connectedAccountId,
+        username: normalizedUsername,
+        label: "Conta conectada",
+        source: "connected",
+      };
+      return [...accounts, nextAccount];
+    });
+    if (supabase && user) {
+      void supabase.from("workspace_instagram_accounts").upsert({
+        id: connectedAccountId,
+        user_id: user.id,
+        username: normalizedUsername,
+        label: existingAccount?.label || "Conta conectada",
+        source: "connected",
+      }).then(({ error }) => {
+        if (error) setToast("A conta conectada apareceu, mas não foi sincronizada.");
+      });
+    }
+  }, [user]);
+
+  useEffect(() => {
+    workspaceInstagramAccountsRef.current = workspaceInstagramAccounts;
+  }, [workspaceInstagramAccounts]);
 
   const loadInstagramMetrics = useCallback(async (periodDays: 30 | 90) => {
     setInstagramMetricsLoading(true);
@@ -463,6 +527,7 @@ function Workspace({ user }: { user: User | null }) {
       });
       setInstagramMetrics(metrics);
       setInstagramAccount(metrics.account);
+      rememberConnectedInstagramAccount(metrics.account);
       setInstagramState("connected");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Não foi possível carregar as métricas.";
@@ -474,7 +539,7 @@ function Workspace({ user }: { user: User | null }) {
     } finally {
       setInstagramMetricsLoading(false);
     }
-  }, []);
+  }, [rememberConnectedInstagramAccount]);
 
   const loadInstagramStatus = useCallback(async () => {
     setInstagramState("checking");
@@ -491,11 +556,12 @@ function Workspace({ user }: { user: User | null }) {
       }
       setInstagramState("connected");
       setInstagramAccount(status.account);
+      rememberConnectedInstagramAccount(status.account);
     } catch (error) {
       setInstagramState("error");
       setInstagramError(error instanceof Error ? error.message : "Não foi possível verificar o Instagram.");
     }
-  }, []);
+  }, [rememberConnectedInstagramAccount]);
 
   const loadGoogleDriveStatus = useCallback(async () => {
     setDriveState("checking");
@@ -520,15 +586,40 @@ function Workspace({ user }: { user: User | null }) {
 
     async function loadWorkspace() {
       setInstagramDemo(window.localStorage.getItem(instagramDemoKey) === "true");
+      const accountStorageKey = `${instagramAccountsKey}:${workspaceId}`;
+      try {
+        const savedAccounts = JSON.parse(window.localStorage.getItem(accountStorageKey) || "[]");
+        const validAccounts = Array.isArray(savedAccounts)
+          ? savedAccounts.filter((account) => account && typeof account.id === "string" && typeof account.username === "string")
+          : [];
+        setWorkspaceInstagramAccounts(validAccounts);
+        setPerformanceAccountId(validAccounts[0]?.id || "");
+      } catch {
+        setWorkspaceInstagramAccounts([]);
+      }
+      setInstagramAccountsReady(true);
 
       if (supabase && user) {
-        const { data, error } = await supabase
-          .from("content_items")
-          .select("id,title,format,pillar,status,scheduled_date,duration,hook,script,cta,notes,drive_file_id,drive_file_name,drive_web_view_link,drive_mime_type,drive_file_size,drive_uploaded_at")
-          .eq("user_id", user.id)
-          .order("scheduled_date", { ascending: true });
-
+        const [accountResult, contentResult] = await Promise.all([
+          supabase
+            .from("workspace_instagram_accounts")
+            .select("id,username,label,source")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("content_items")
+            .select("id,title,format,pillar,status,scheduled_date,duration,hook,script,cta,notes,instagram_account_id,drive_file_id,drive_file_name,drive_web_view_link,drive_mime_type,drive_file_size,drive_uploaded_at")
+            .eq("user_id", user.id)
+            .order("scheduled_date", { ascending: true }),
+        ]);
         if (!active) return;
+        const { data: accountRows, error: accountError } = accountResult;
+        if (!accountError && accountRows) {
+          const cloudAccounts = accountRows as WorkspaceInstagramAccount[];
+          setWorkspaceInstagramAccounts(cloudAccounts);
+          setPerformanceAccountId(cloudAccounts[0]?.id || "");
+        }
+        const { data, error } = contentResult;
         if (error) {
           setToast("Não foi possível carregar seus conteúdos. Tente novamente.");
           setReady(true);
@@ -552,6 +643,7 @@ function Workspace({ user }: { user: User | null }) {
                   ...item,
                   id: String(item.id),
                   pillar: normalizeFunnelStage(String(item.pillar || "")),
+                  instagramAccountId: typeof item.instagramAccountId === "string" ? item.instagramAccountId : null,
                   driveFileId: item.driveFileId || null,
                   driveFileName: item.driveFileName || null,
                   driveWebViewLink: item.driveWebViewLink || null,
@@ -574,7 +666,7 @@ function Workspace({ user }: { user: User | null }) {
       window.cancelAnimationFrame(frame);
       Object.values(saveTimers).forEach((timer) => window.clearTimeout(timer));
     };
-  }, [user]);
+  }, [user, workspaceId]);
 
   useEffect(() => {
     let frame = 0;
@@ -689,6 +781,24 @@ function Workspace({ user }: { user: User | null }) {
   }, [contents, ready, user]);
 
   useEffect(() => {
+    if (!instagramAccountsReady) return;
+    window.localStorage.setItem(
+      `${instagramAccountsKey}:${workspaceId}`,
+      JSON.stringify(workspaceInstagramAccounts),
+    );
+  }, [instagramAccountsReady, workspaceId, workspaceInstagramAccounts]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const assignments = Object.fromEntries(
+      contents
+        .filter((item) => item.instagramAccountId)
+        .map((item) => [item.id, item.instagramAccountId]),
+    );
+    window.localStorage.setItem(`${instagramAssignmentsKey}:${workspaceId}`, JSON.stringify(assignments));
+  }, [contents, ready, workspaceId]);
+
+  useEffect(() => {
     if (!toast) return;
     const timeout = window.setTimeout(() => setToast(""), 3200);
     return () => window.clearTimeout(timeout);
@@ -730,6 +840,106 @@ function Workspace({ user }: { user: User | null }) {
 
   function announce(message: string) {
     setToast(message);
+  }
+
+  async function saveWorkspaceInstagramAccount(event: React.FormEvent) {
+    event.preventDefault();
+    const username = accountDraft.username.replace(/^@/, "").trim();
+    if (!username) return;
+    if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) {
+      announce("Digite um @usuário válido do Instagram.");
+      return;
+    }
+    const existing = workspaceInstagramAccounts.find((account) => account.username.toLowerCase() === username.toLowerCase());
+    if (existing) {
+      announce("Esta conta já está cadastrada no MAPA.");
+      return;
+    }
+    const account: WorkspaceInstagramAccount = {
+      id: crypto.randomUUID(),
+      username,
+      label: accountDraft.label.trim() || `@${username}`,
+      source: "manual",
+    };
+    if (supabase && user) {
+      const { error } = await supabase.from("workspace_instagram_accounts").insert({
+        ...account,
+        user_id: user.id,
+      });
+      if (error) {
+        announce("Não foi possível sincronizar esta conta do Instagram.");
+        return;
+      }
+    }
+    setWorkspaceInstagramAccounts((accounts) => [...accounts, account]);
+    setPerformanceAccountId((current) => current || account.id);
+    setNewItem((item) => ({ ...item, instagramAccountId: item.instagramAccountId || account.id }));
+    setAccountDraft({ username: "", label: "" });
+    announce(`@${username} adicionada ao espaço.`);
+  }
+
+  async function removeWorkspaceInstagramAccount(accountId: string) {
+    const account = workspaceInstagramAccounts.find((item) => item.id === accountId);
+    if (!account || !window.confirm(`Remover @${account.username} das opções de produção?`)) return;
+    if (supabase && user) {
+      const { error } = await supabase
+        .from("workspace_instagram_accounts")
+        .delete()
+        .eq("id", accountId)
+        .eq("user_id", user.id);
+      if (error) {
+        announce("Não foi possível remover esta conta do espaço.");
+        return;
+      }
+    }
+    const remainingAccounts = workspaceInstagramAccounts.filter((item) => item.id !== accountId);
+    setWorkspaceInstagramAccounts(remainingAccounts);
+    if (performanceAccountId === accountId) setPerformanceAccountId(remainingAccounts[0]?.id || "");
+    setContents((items) => items.map((item) => item.instagramAccountId === accountId ? { ...item, instagramAccountId: null } : item));
+    setNewItem((item) => item.instagramAccountId === accountId ? { ...item, instagramAccountId: "" } : item);
+    announce(`@${account.username} removida. Os roteiros ficaram sem conta definida.`);
+  }
+
+  async function createFromCapture(capture: CaptureItem) {
+    const reference = [
+      `Origem: Inbox de Captura Rápida · ${kindLabelForCapture(capture.kind)}`,
+      capture.text,
+      capture.url ? `Link: ${capture.url}` : "",
+      capture.fileName ? `Arquivo local: ${capture.fileName}` : "",
+      capture.tags.length ? `Tags: ${capture.tags.join(", ")}` : "",
+    ].filter(Boolean).join("\n\n");
+    const item: ContentItem = {
+      id: crypto.randomUUID(),
+      title: capture.title,
+      format: "Reel",
+      pillar: "Topo de funil",
+      status: "Ideia",
+      date: todayIso,
+      duration: "60s",
+      hook: "",
+      script: "",
+      cta: "",
+      notes: reference,
+      instagramAccountId: performanceAccountId || workspaceInstagramAccounts[0]?.id || null,
+      driveFileId: null,
+      driveFileName: null,
+      driveWebViewLink: null,
+      driveMimeType: null,
+      driveFileSize: null,
+      driveUploadedAt: null,
+    };
+    setContents((items) => [...items, item]);
+    setSelectedId(item.id);
+    setView("roteiros");
+    if (supabase && user) {
+      const { error } = await supabase.from("content_items").insert(contentToRow(item, user.id));
+      if (error) {
+        setContents((items) => items.filter((content) => content.id !== item.id));
+        announce("Não foi possível transformar a captura em pauta.");
+        return;
+      }
+    }
+    announce("Captura transformada em pauta.");
   }
 
   function changeStatus(id: string, status: Status) {
@@ -813,10 +1023,15 @@ function Workspace({ user }: { user: User | null }) {
       const userId = user.id;
       window.clearTimeout(saveTimersRef.current[itemId]);
       saveTimersRef.current[itemId] = window.setTimeout(() => {
-        const databaseField = field === "date" ? "scheduled_date" : field;
+        const databaseField = field === "date"
+          ? "scheduled_date"
+          : field === "instagramAccountId"
+            ? "instagram_account_id"
+            : field;
+        const databaseValue = field === "instagramAccountId" ? value || null : value;
         void client
           .from("content_items")
-          .update({ [databaseField]: value })
+          .update({ [databaseField]: databaseValue })
           .eq("id", itemId)
           .eq("user_id", userId)
           .then(({ error }) => {
@@ -838,6 +1053,7 @@ function Workspace({ user }: { user: User | null }) {
       script: "",
       cta: "",
       notes: "",
+      instagramAccountId: newItem.instagramAccountId || null,
       driveFileId: null,
       driveFileName: null,
       driveWebViewLink: null,
@@ -848,7 +1064,7 @@ function Workspace({ user }: { user: User | null }) {
     setContents((items) => [...items, item]);
     setSelectedId(item.id);
     setAddOpen(false);
-    setNewItem({ title: "", format: "Reel", pillar: "Topo de funil", date: todayIso, status: "Ideia" });
+    setNewItem({ title: "", format: "Reel", pillar: "Topo de funil", date: todayIso, status: "Ideia", instagramAccountId: "" });
     if (supabase && user) {
       const { error } = await supabase.from("content_items").insert(contentToRow(item, user.id));
       if (error) {
@@ -868,6 +1084,15 @@ function Workspace({ user }: { user: User | null }) {
 
   function enableInstagramDemo() {
     window.localStorage.setItem(instagramDemoKey, "true");
+    if (!workspaceInstagramAccounts.length) {
+      const demoAccounts: WorkspaceInstagramAccount[] = [
+        { id: "demo:principal", username: "conta_principal", label: "Conta principal", source: "demo" },
+        { id: "demo:secundaria", username: "segunda_conta", label: "Segunda conta", source: "demo" },
+      ];
+      setWorkspaceInstagramAccounts(demoAccounts);
+      setPerformanceAccountId(demoAccounts[0].id);
+      setNewItem((item) => ({ ...item, instagramAccountId: demoAccounts[0].id }));
+    }
     setInstagramDemo(true);
     setInstagramOpen(false);
     announce("Modo demonstração ativado no painel.");
@@ -1004,19 +1229,20 @@ function Workspace({ user }: { user: User | null }) {
     announce("Espaço zerado com sucesso.");
   }
 
-  async function createFromInsight() {
+  async function createFromPerformancePost(media: import("@/lib/instagram").InstagramMediaMetric) {
     const item: ContentItem = {
       id: crypto.randomUUID(),
-      title: "O que a balança não está mostrando?",
-      format: "Reel",
+      title: `Nova abordagem: ${media.caption.slice(0, 110) || "conteúdo do Instagram"}`,
+      format: media.media_type.includes("CAROUSEL") ? "Carrossel" : "Reel",
       pillar: "Topo de funil",
       status: "Roteiro",
       date: todayIso,
-      duration: "60s",
-      hook: "O que a balança não está mostrando sobre o seu progresso?",
+      duration: media.media_type.includes("CAROUSEL") ? "8 páginas" : "60s",
+      hook: "",
       script: "",
       cta: "",
-      notes: "Ideia criada a partir de um insight do painel de demonstração.",
+      notes: `Pauta criada a partir da análise de desempenho.\n\nPost de referência: ${media.caption}\nVisualizações: ${media.views}\nAlcance: ${media.reach}\nSalvamentos: ${media.saved}\nCompartilhamentos: ${media.shares}${media.permalink ? `\nLink: ${media.permalink}` : ""}`,
+      instagramAccountId: performanceAccountId || null,
       driveFileId: null,
       driveFileName: null,
       driveWebViewLink: null,
@@ -1031,12 +1257,11 @@ function Workspace({ user }: { user: User | null }) {
       const { error } = await supabase.from("content_items").insert(contentToRow(item, user.id));
       if (error) {
         setContents((items) => items.filter((content) => content.id !== item.id));
-        setSelectedId(null);
-        announce("Não foi possível salvar esse insight como roteiro.");
+        announce("Não foi possível criar a pauta a partir da análise.");
         return;
       }
     }
-    announce("Roteiro criado a partir do insight.");
+    announce("Nova pauta criada a partir do desempenho do post.");
   }
 
   async function saveSelected() {
@@ -1057,6 +1282,7 @@ function Workspace({ user }: { user: User | null }) {
           script: row.script,
           cta: row.cta,
           notes: row.notes,
+          instagram_account_id: row.instagram_account_id,
         })
         .eq("id", selected.id)
         .eq("user_id", user.id);
@@ -1093,6 +1319,11 @@ function Workspace({ user }: { user: User | null }) {
       eyebrow: "ESTÚDIO DE CRIAÇÃO",
       title: "Roteiros",
       subtitle: "Da primeira frase ao CTA, sem perder nenhuma boa ideia.",
+    },
+    inbox: {
+      eyebrow: "CAPTURA RÁPIDA",
+      title: "Inbox de inspirações",
+      subtitle: "Guarde agora. Organize e transforme em conteúdo quando estiver pronto.",
     },
     desempenho: {
       eyebrow: "ANÁLISE DE CONTEÚDO",
@@ -1160,11 +1391,12 @@ function Workspace({ user }: { user: User | null }) {
           <button className="icon-button mobile-menu" aria-label="Abrir menu" onClick={() => setMobileMenu(true)}><Menu size={21} /></button>
           <div className="search-box">
             <Search size={18} />
-            <input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar conteúdo, tema ou formato..." aria-label="Buscar conteúdo" />
+            <input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={view === "inbox" ? "Buscar inspiração, link, tag ou anotação..." : "Buscar conteúdo, tema ou formato..."} aria-label={view === "inbox" ? "Buscar no Inbox" : "Buscar conteúdo"} />
             <kbd>⌘ K</kbd>
           </div>
           <div className="top-actions">
             <button className="icon-button notification" aria-label="Notificações" onClick={() => setUtilityModal("notifications")}><Bell size={20} /></button>
+            <button className="button secondary capture-top-button" onClick={() => { setView("inbox"); setInboxComposerToken((token) => token + 1); }}><Inbox size={17} /> Capturar</button>
             <button className="button primary" onClick={() => openAdd()}><Plus size={18} /> Novo conteúdo</button>
           </div>
         </header>
@@ -1185,6 +1417,9 @@ function Workspace({ user }: { user: User | null }) {
                     : "Configurar Instagram"}
               </button>
             )}
+            {view === "roteiros" && (
+              <button className="button secondary" onClick={() => setInstagramAccountsOpen(true)}><Instagram size={17} /> {workspaceInstagramAccounts.length ? `${workspaceInstagramAccounts.length} ${workspaceInstagramAccounts.length === 1 ? "conta" : "contas"}` : "Cadastrar contas"}</button>
+            )}
           </section>
 
           {view === "hoje" && (
@@ -1204,6 +1439,8 @@ function Workspace({ user }: { user: User | null }) {
             <ScriptsView
               contents={filteredContents}
               selected={selected}
+              instagramAccounts={workspaceInstagramAccounts}
+              workspaceId={workspaceId}
               onSelect={setSelectedId}
               onUpdate={updateSelected}
               onStatusChange={changeStatus}
@@ -1211,9 +1448,20 @@ function Workspace({ user }: { user: User | null }) {
               onUploadVideo={openDriveUpload}
               onSave={() => void saveSelected()}
               onAdd={() => openAdd()}
+              onOpenInbox={() => setView("inbox")}
+              onNotify={announce}
             />
           )}
           {view === "roteiros" && !selected && <EmptyWorkspace onAdd={() => openAdd()} />}
+          {view === "inbox" && (
+            <CaptureInbox
+              workspaceId={workspaceId}
+              search={search}
+              openComposerToken={inboxComposerToken}
+              onCreateContent={(capture) => void createFromCapture(capture)}
+              onNotify={announce}
+            />
+          )}
           {view === "desempenho" && (
             <PerformanceView
               demo={instagramDemo}
@@ -1222,11 +1470,15 @@ function Workspace({ user }: { user: User | null }) {
               metrics={instagramMetrics}
               metricsLoading={instagramMetricsLoading}
               period={instagramPeriod}
+              workspaceAccounts={workspaceInstagramAccounts}
+              selectedAccountId={performanceAccountId}
               onConnect={() => setInstagramOpen(true)}
               onPeriodChange={setInstagramPeriod}
+              onSelectAccount={setPerformanceAccountId}
+              onManageAccounts={() => setInstagramAccountsOpen(true)}
               onRefresh={() => void loadInstagramMetrics(instagramPeriod)}
               onDisableDemo={disableInstagramDemo}
-              onCreateFromInsight={createFromInsight}
+              onCreateFromPost={(media) => void createFromPerformancePost(media)}
               onNotify={announce}
             />
           )}
@@ -1256,8 +1508,48 @@ function Workspace({ user }: { user: User | null }) {
               <label>Etapa de funil<select value={newItem.pillar} onChange={(event) => setNewItem({ ...newItem, pillar: event.target.value as FunnelStage })}>{funnelStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
               <label>Data<input type="date" value={newItem.date} onChange={(event) => setNewItem({ ...newItem, date: event.target.value })} /></label>
             </div>
+            <div className="instagram-assignment-field">
+              <label>Conta do Instagram<select value={newItem.instagramAccountId} onChange={(event) => setNewItem({ ...newItem, instagramAccountId: event.target.value })}><option value="">Definir depois</option>{workspaceInstagramAccounts.map((account) => <option key={account.id} value={account.id}>@{account.username} · {account.label}</option>)}</select></label>
+              <button type="button" className="button ghost" onClick={() => setInstagramAccountsOpen(true)}><UserPlus size={16} /> Gerenciar contas</button>
+            </div>
+            {!workspaceInstagramAccounts.length && <div className="form-guidance"><Instagram size={16} /><span>Cadastre suas contas para marcar qual perfil receberá este roteiro.</span></div>}
             <div className="modal-actions"><button type="button" className="button ghost" onClick={() => setAddOpen(false)}>Cancelar</button><button className="button primary" type="submit"><Plus size={18} /> Adicionar ao MAPA</button></div>
           </form>
+        </Modal>
+      )}
+
+      {instagramAccountsOpen && (
+        <Modal onClose={() => setInstagramAccountsOpen(false)} wide>
+          <div className="account-manager">
+            <div className="modal-icon instagram"><Instagram size={23} /></div>
+            <span className="eyebrow">CONTAS DE PRODUÇÃO</span>
+            <h2>Organizar contas do Instagram</h2>
+            <p>Cadastre os perfis com que você trabalha. Assim cada pauta e roteiro fica vinculado à conta correta.</p>
+
+            <div className="workspace-account-list">
+              {workspaceInstagramAccounts.map((account) => {
+                const assigned = contents.filter((item) => item.instagramAccountId === account.id).length;
+                return (
+                  <div key={account.id} className="workspace-account-row">
+                    <span className="workspace-account-avatar"><Instagram size={18} /></span>
+                    <span><strong>@{account.username}</strong><small>{account.label} · {assigned} {assigned === 1 ? "conteúdo" : "conteúdos"}</small></span>
+                    {account.source === "connected"
+                      ? <span className="connected-account-badge"><CheckCircle2 size={14} /> Conectada</span>
+                      : <button className="icon-button danger" aria-label={`Remover @${account.username}`} onClick={() => removeWorkspaceInstagramAccount(account.id)}><Trash2 size={16} /></button>}
+                  </div>
+                );
+              })}
+              {!workspaceInstagramAccounts.length && <div className="workspace-account-empty"><Instagram size={23} /><span><strong>Nenhuma conta cadastrada</strong><small>Adicione a principal e, se quiser, uma segunda conta.</small></span></div>}
+            </div>
+
+            <form className="account-manager-form" onSubmit={saveWorkspaceInstagramAccount}>
+              <label>Usuário do Instagram<div className="instagram-username-input"><span>@</span><input value={accountDraft.username} onChange={(event) => setAccountDraft({ ...accountDraft, username: event.target.value })} placeholder="usuario" /></div></label>
+              <label>Nome no MAPA<input value={accountDraft.label} onChange={(event) => setAccountDraft({ ...accountDraft, label: event.target.value })} placeholder="Ex.: NutroSchool ou Perfil pessoal" /></label>
+              <button className="button primary" type="submit"><Plus size={17} /> Adicionar conta</button>
+            </form>
+            <div className="info-note"><Lightbulb size={18} /><p><strong>Local primeiro:</strong> estas opções já funcionam neste dispositivo. A conexão oficial de métricas continua identificada separadamente.</p></div>
+            <div className="modal-actions"><button className="button primary" onClick={() => setInstagramAccountsOpen(false)}>Concluir</button></div>
+          </div>
         </Modal>
       )}
 
@@ -1422,8 +1714,14 @@ function Workspace({ user }: { user: User | null }) {
           <div className="utility-modal">
             <div className="profile-modal-head"><span className="avatar large">{initials}</span><span><span className="eyebrow">MEU ESPAÇO</span><h2>{displayName}</h2><p>{user?.email || "Dados salvos neste navegador"}</p></span></div>
             <div className="workspace-summary"><Settings2 size={20} /><span><strong>{contents.length} conteúdos cadastrados</strong><small>{user ? "Seus dados ficam sincronizados e protegidos por usuário." : "O MAPA mantém apenas o que você adicionar neste dispositivo."}</small></span></div>
-            <div className="modal-actions profile-actions"><button className="button ghost danger" onClick={() => void resetWorkspace()}>Zerar meu espaço</button>{user && <button className="button ghost" onClick={() => void signOut()}><LogOut size={17} /> Sair</button>}<button className="button primary" onClick={() => setUtilityModal(null)}>Concluir</button></div>
+            <div className="modal-actions profile-actions"><button className="button ghost danger" onClick={() => void resetWorkspace()}>Zerar meu espaço</button>{user && <button className="button secondary" onClick={() => setUtilityModal("settings")}><Settings2 size={17} /> Configurações</button>}{user && <button className="button ghost" onClick={() => void signOut()}><LogOut size={17} /> Sair</button>}<button className="button primary" onClick={() => setUtilityModal(null)}>Concluir</button></div>
           </div>
+        </Modal>
+      )}
+
+      {utilityModal === "settings" && user && (
+        <Modal onClose={() => setUtilityModal(null)}>
+          <PasswordSettings email={user.email || "sua conta"} onClose={() => setUtilityModal("profile")} onNotify={announce} />
         </Modal>
       )}
 
@@ -1813,10 +2111,25 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
   );
 }
 
-function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, onDelete, onUploadVideo, onSave, onAdd }: { contents: ContentItem[]; selected: ContentItem; onSelect: (id: string) => void; onUpdate: (field: keyof ContentItem, value: string) => void; onStatusChange: (id: string, status: Status) => void; onDelete: (id: string) => void; onUploadVideo: (id: string) => void; onSave: () => void; onAdd: () => void }) {
+function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSelect, onUpdate, onStatusChange, onDelete, onUploadVideo, onSave, onAdd, onOpenInbox, onNotify }: {
+  contents: ContentItem[];
+  selected: ContentItem;
+  instagramAccounts: WorkspaceInstagramAccount[];
+  workspaceId: string;
+  onSelect: (id: string) => void;
+  onUpdate: (field: keyof ContentItem, value: string) => void;
+  onStatusChange: (id: string, status: Status) => void;
+  onDelete: (id: string) => void;
+  onUploadVideo: (id: string) => void;
+  onSave: () => void;
+  onAdd: () => void;
+  onOpenInbox: () => void;
+  onNotify: (message: string) => void;
+}) {
   const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [teleprompterOpen, setTeleprompterOpen] = useState(false);
+  const [inspirationsOpen, setInspirationsOpen] = useState(false);
   const closeTeleprompter = useCallback(() => setTeleprompterOpen(false), []);
   const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
   const currentStatusIndex = statusOrder.indexOf(selected.status);
@@ -1848,6 +2161,22 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
       },
     };
     onUpdate("script", JSON.stringify(nextDocument));
+  }
+
+  function useCaptureInNotes(capture: CaptureItem) {
+    const reference = [
+      `Inspiração: ${capture.title} (${kindLabelForCapture(capture.kind)})`,
+      capture.text,
+      capture.url ? `Link: ${capture.url}` : "",
+      capture.fileName ? `Arquivo: ${capture.fileName}` : "",
+    ].filter(Boolean).join("\n");
+    const alreadyAdded = selected.notes.includes(`Inspiração: ${capture.title}`);
+    if (alreadyAdded) {
+      onNotify("Esta inspiração já está nas notas do roteiro.");
+      return;
+    }
+    onUpdate("notes", [selected.notes.trim(), reference].filter(Boolean).join("\n\n"));
+    onNotify("Inspiração adicionada às notas do roteiro.");
   }
 
   return (
@@ -1917,9 +2246,10 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
             ))}
           </div>
         </div>
+        <div className={`editor-content-area ${inspirationsOpen ? "with-inspirations" : ""}`}>
         <div className="editor-scroll">
           <label className="title-input"><span>TÍTULO</span><input value={selected.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
-          <div className="brief-row"><span><CalendarDays size={15} /> {formatShortDate(selected.date)}</span><span><Clock3 size={15} /> {selected.duration}</span><span><Target size={15} /> Etapa: {selected.pillar}</span></div>
+          <div className="brief-row"><span><CalendarDays size={15} /> {formatShortDate(selected.date)}</span><span><Clock3 size={15} /> {selected.duration}</span><span><Target size={15} /> Etapa: {selected.pillar}</span><label className="script-account-select"><Instagram size={15} /><select aria-label="Conta do Instagram deste roteiro" value={selected.instagramAccountId || ""} onChange={(event) => onUpdate("instagramAccountId", event.target.value)}><option value="">Sem conta definida</option>{instagramAccounts.map((account) => <option key={account.id} value={account.id}>@{account.username}</option>)}</select></label><button type="button" className={`script-inspiration-toggle ${inspirationsOpen ? "active" : ""}`} aria-expanded={inspirationsOpen} onClick={() => setInspirationsOpen((open) => !open)}><Lightbulb size={15} /> Inspirações</button></div>
           <div className="script-document-summary">
             <div><Sparkles size={19} /><span><strong>Roteiro magnético em 10 blocos</strong><small>Escreva, formate e acrescente notas em cada etapa.</small></span></div>
             <span>{totalWords} palavras · aprox. {Math.max(0, Math.ceil(totalWords / 2.2))} segundos</span>
@@ -1938,6 +2268,8 @@ function ScriptsView({ contents, selected, onSelect, onUpdate, onStatusChange, o
               );
             })}
           </div>
+        </div>
+        {inspirationsOpen && <ScriptInspirationPanel workspaceId={workspaceId} onClose={() => setInspirationsOpen(false)} onOpenInbox={onOpenInbox} onUseCapture={useCaptureInNotes} />}
         </div>
       </article>
       {teleprompterOpen && (
@@ -2193,11 +2525,15 @@ function PerformanceView({
   metrics,
   metricsLoading,
   period,
+  workspaceAccounts,
+  selectedAccountId,
   onConnect,
   onPeriodChange,
+  onSelectAccount,
+  onManageAccounts,
   onRefresh,
   onDisableDemo,
-  onCreateFromInsight,
+  onCreateFromPost,
   onNotify,
 }: {
   demo: boolean;
@@ -2206,122 +2542,76 @@ function PerformanceView({
   metrics: InstagramMetrics | null;
   metricsLoading: boolean;
   period: 30 | 90;
+  workspaceAccounts: WorkspaceInstagramAccount[];
+  selectedAccountId: string;
   onConnect: () => void;
   onPeriodChange: (period: 30 | 90) => void;
+  onSelectAccount: (accountId: string) => void;
+  onManageAccounts: () => void;
   onRefresh: () => void;
   onDisableDemo: () => void;
-  onCreateFromInsight: () => void;
+  onCreateFromPost: (media: import("@/lib/instagram").InstagramMediaMetric) => void;
   onNotify: (message: string) => void;
 }) {
-  type DemoPeriod = "30" | "90" | "year";
-  const [demoPeriod, setDemoPeriod] = useState<DemoPeriod>("30");
-  const datasets: Record<DemoPeriod, { views: string; reach: string; engagement: string; followers: string; total: string; growth: string; bars: number[] }> = {
-    "30": { views: "128,4 mil", reach: "74,8 mil", engagement: "6,8%", followers: "+1.284", total: "128.420", growth: "18,2%", bars: [38, 52, 45, 67, 58, 82, 72, 92, 76, 88, 66, 96] },
-    "90": { views: "361,7 mil", reach: "205,2 mil", engagement: "6,1%", followers: "+3.506", total: "361.740", growth: "24,7%", bars: [32, 45, 41, 55, 63, 59, 70, 74, 68, 82, 88, 94] },
-    year: { views: "1,2 mi", reach: "684 mil", engagement: "5,9%", followers: "+11.842", total: "1.204.870", growth: "31,4%", bars: [25, 31, 43, 39, 52, 61, 56, 68, 75, 79, 87, 98] },
-  };
-  const data = datasets[demoPeriod];
-  const ranking = [
-    ["Proteína depois dos 60", "Reel · 01 ago", "42,8 mil", "71%", "3.842", "9,4"],
-    ["Creatina: o mito dos rins", "Reel · 27 jul", "31,2 mil", "68%", "2.915", "9,1"],
-    ["O que a balança não mostra", "Carrossel · 24 jul", "18,6 mil", "62%", "2.104", "8,7"],
-  ];
-
-  if (connectionState === "connected") {
-    return (
-      <InstagramPerformance
-        account={account}
-        metrics={metrics}
-        loading={metricsLoading}
-        period={period}
-        onPeriodChange={onPeriodChange}
-        onRefresh={onRefresh}
-        onNotify={onNotify}
-      />
-    );
-  }
-
-  function exportReport() {
-    const rows = [["Conteúdo", "Formato/Data", "Visualizações", "Retenção", "Interações", "Nota MAPA"], ...ranking];
-    const csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `mapa-relatorio-${demoPeriod}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    onNotify("Relatório de demonstração exportado.");
-  }
-
-  if (!demo) {
-    return (
-      <>
-        <section className="connect-banner">
-          <div className="connect-visual"><Instagram size={29} /><span><i /><i /><i /></span></div>
-          <div><span className="eyebrow">PAINEL ZERADO</span><h2>Conecte seus dados quando estiver pronto</h2><p>Nenhuma métrica fictícia é exibida. Você também pode conhecer o painel usando a demonstração identificada.</p></div>
-          <button className="button instagram-button" onClick={onConnect}><Instagram size={18} /> Ver opções</button>
-        </section>
-        <section className="metrics-grid analytics-metrics">
-          <MetricCard icon={<Eye size={19} />} tone="lime" label="Visualizações" value="0" detail="Sem dados importados" />
-          <MetricCard icon={<Users size={19} />} tone="blue" label="Alcance" value="0" detail="Sem dados importados" />
-          <MetricCard icon={<Heart size={19} />} tone="coral" label="Engajamento" value="0%" detail="Sem dados importados" />
-          <MetricCard icon={<TrendingUp size={19} />} tone="violet" label="Novos seguidores" value="0" detail="Sem dados importados" />
-        </section>
-        <section className="panel empty-analytics">
-          <span className="empty-state-icon"><BarChart3 size={28} /></span>
-          <h2>Nenhum desempenho registrado</h2>
-          <p>Quando a integração oficial estiver configurada, seus conteúdos e métricas aparecerão aqui.</p>
-          <button className="button secondary" onClick={onConnect}><Instagram size={17} /> Conhecer a integração</button>
-        </section>
-      </>
-    );
-  }
+  const selectedWorkspaceAccount = workspaceAccounts.find((item) => item.id === selectedAccountId) || workspaceAccounts[0] || null;
+  const connectedUsername = account?.username.replace(/^@/, "").toLowerCase();
+  const selectedIsConnected = connectionState === "connected" && (!selectedWorkspaceAccount || selectedWorkspaceAccount.username.toLowerCase() === connectedUsername);
+  const demoMetrics = demo ? buildDemoInstagramMetrics(period, selectedWorkspaceAccount?.username || "conta_principal", selectedAccountId) : null;
 
   return (
     <>
-      <div className="demo-banner"><span><Sparkles size={16} /> Modo demonstração</span><p>Os números abaixo são apenas exemplos e não pertencem à sua conta.</p><button onClick={onDisableDemo}>Sair da demonstração <X size={15} /></button></div>
-
-      <section className="analytics-head">
-        <div className="period-tabs">
-          <button className={demoPeriod === "30" ? "active" : ""} onClick={() => setDemoPeriod("30")}>Últimos 30 dias</button>
-          <button className={demoPeriod === "90" ? "active" : ""} onClick={() => setDemoPeriod("90")}>90 dias</button>
-          <button className={demoPeriod === "year" ? "active" : ""} onClick={() => setDemoPeriod("year")}>Este ano</button>
-        </div>
-        <span className="sync-state demo"><span /> Dados de demonstração</span>
-      </section>
-      <section className="metrics-grid analytics-metrics">
-        <MetricCard icon={<Eye size={19} />} tone="lime" label="Visualizações" value={data.views} detail="Exemplo do período" positive />
-        <MetricCard icon={<Users size={19} />} tone="blue" label="Alcance" value={data.reach} detail="Exemplo do período" positive />
-        <MetricCard icon={<Heart size={19} />} tone="coral" label="Engajamento" value={data.engagement} detail="Exemplo do período" positive />
-        <MetricCard icon={<TrendingUp size={19} />} tone="violet" label="Novos seguidores" value={data.followers} detail="Exemplo do período" positive />
-      </section>
-
-      <section className="analytics-grid">
-        <div className="panel chart-panel">
-          <PanelHeader eyebrow="EVOLUÇÃO" title="Visualizações por publicação" action="Ver detalhes" onAction={() => onNotify(`Período selecionado: ${demoPeriod === "30" ? "últimos 30 dias" : demoPeriod === "90" ? "90 dias" : "este ano"}.`)} />
-          <div className="chart-total"><strong>{data.total}</strong><span><TrendingUp size={14} /> {data.growth}</span><small>exemplo comparativo</small></div>
-          <div className="bar-chart">{data.bars.map((height, index) => <div key={index} className={index === 11 ? "highlight" : ""}><span style={{ height: `${height}%` }} /><small>{index % 2 === 0 ? `${index + 1}` : ""}</small></div>)}</div>
-        </div>
-        <div className="panel insight-panel">
-          <div className="insight-heading"><span className="panel-icon"><Sparkles size={18} /></span><div><span className="eyebrow">INSIGHT DE EXEMPLO</span><h2>Seu padrão vencedor</h2></div></div>
-          <p className="insight-lead">Conteúdos que <strong>abrem com uma pergunta clínica</strong> podem gerar mais salvamentos.</p>
-          <div className="insight-proof"><span><Bookmark size={17} /> Salvamentos do exemplo</span><strong>642</strong><small>vs. 268 nos demais</small></div>
-          <div className="next-action"><Lightbulb size={18} /><p><strong>Próxima ação</strong>Comece o próximo Reel com: “O que a balança não está mostrando?”</p></div>
-          <button className="button secondary full" onClick={onCreateFromInsight}><PencilLine size={17} /> Criar roteiro a partir deste insight</button>
+      <section className="panel performance-account-switcher">
+        <div><span className="eyebrow">CONTA EM ANÁLISE</span><h2>Escolha o perfil</h2><p>Roteiros e métricas permanecem separados por conta.</p></div>
+        <div className="performance-account-tabs">
+          {workspaceAccounts.map((workspaceAccount) => <button key={workspaceAccount.id} className={workspaceAccount.id === selectedAccountId ? "active" : ""} onClick={() => onSelectAccount(workspaceAccount.id)}><Instagram size={15} /><span><strong>@{workspaceAccount.username}</strong><small>{workspaceAccount.label}</small></span></button>)}
+          <button className="manage-performance-accounts" onClick={onManageAccounts}><UserPlus size={16} /> {workspaceAccounts.length ? "Gerenciar" : "Adicionar conta"}</button>
         </div>
       </section>
 
-      <section className="panel top-content-panel">
-        <PanelHeader eyebrow="RANKING DE EXEMPLO" title="Conteúdos com melhor desempenho" action="Exportar relatório" onAction={exportReport} />
-        <div className="ranking-table">
-          <div className="ranking-row ranking-head"><span>Conteúdo</span><span>Visualizações</span><span>Retenção</span><span>Interações</span><span>Nota MAPA</span></div>
-          {ranking.map((row, index) => (
-            <div className="ranking-row" key={row[0]}><span className="rank-title"><em>0{index + 1}</em><i className={`rank-thumb thumb-${index + 1}`}><Play size={15} /></i><span><strong>{row[0]}</strong><small>{row[1]}</small></span></span><span>{row[2]}</span><span>{row[3]}</span><span className="interaction-icons"><Heart size={14} /> {row[4]}</span><span className="mapa-score"><Sparkles size={14} /> {row[5]}</span></div>
-          ))}
-        </div>
-      </section>
+      {selectedIsConnected ? (
+        <InstagramPerformance account={account} metrics={metrics} loading={metricsLoading} period={period} onPeriodChange={onPeriodChange} onRefresh={onRefresh} onNotify={onNotify} onCreateFromPost={onCreateFromPost} />
+      ) : demo && demoMetrics ? (
+        <InstagramPerformance account={demoMetrics.account} metrics={demoMetrics} loading={false} period={period} demo onPeriodChange={onPeriodChange} onRefresh={() => onNotify("Análise demonstrativa recalculada.")} onNotify={onNotify} onCreateFromPost={onCreateFromPost} onExitDemo={onDisableDemo} />
+      ) : (
+        <>
+          <section className="connect-banner account-specific-connect">
+            <div className="connect-visual"><Instagram size={29} /><span><i /><i /><i /></span></div>
+            <div><span className="eyebrow">{selectedWorkspaceAccount ? `@${selectedWorkspaceAccount.username.toUpperCase()}` : "PAINEL ZERADO"}</span><h2>{selectedWorkspaceAccount ? "Conta cadastrada, métricas ainda não conectadas" : "Adicione uma conta para começar"}</h2><p>{selectedWorkspaceAccount ? "Você já pode marcar esta conta nos roteiros. Conecte o perfil profissional ou abra a demonstração para explorar a análise detalhada." : "Cadastre os perfis que usa para separar pautas, roteiros e futuras análises."}</p></div>
+            <button className="button instagram-button" onClick={onConnect}><Instagram size={18} /> Ver opções</button>
+          </section>
+          <section className="panel empty-analytics"><span className="empty-state-icon"><BarChart3 size={28} /></span><h2>Nenhum desempenho para esta conta</h2><p>Nenhuma métrica fictícia será misturada ao perfil. A demonstração, quando ativada, fica claramente identificada.</p><button className="button secondary" onClick={onConnect}><Instagram size={17} /> Conectar ou demonstrar</button></section>
+        </>
+      )}
     </>
   );
+}
+
+function buildDemoInstagramMetrics(period: 30 | 90, username: string, accountId: string): InstagramMetrics {
+  const accountFactor = accountId.includes("secundaria") ? .58 : 1;
+  const periodFactor = period === 90 ? 2.35 : 1;
+  const source = [
+    ["Proteína depois dos 60: o que realmente muda?", "REELS", 42800, 31500, 2180, 184, 642, 511],
+    ["Creatina faz mal para os rins?", "REELS", 31200, 24400, 1740, 236, 488, 694],
+    ["O que a balança não mostra sobre seu progresso", "CAROUSEL_ALBUM", 18600, 14800, 1180, 119, 701, 286],
+    ["3 sinais de baixa ingestão proteica", "CAROUSEL_ALBUM", 14900, 12700, 932, 87, 516, 174],
+    ["O melhor horário para tomar seus suplementos", "REELS", 9200, 8100, 411, 34, 119, 77],
+    ["Bastidores da gravação de hoje", "REELS", 6100, 5700, 248, 41, 28, 19],
+    ["Uma frase sobre consistência", "IMAGE", 3800, 3500, 137, 11, 9, 8],
+    ["Você precisa cortar todo carboidrato?", "REELS", 12700, 10300, 721, 163, 208, 345],
+  ] as const;
+  const baseDate = new Date(`${todayIso}T12:00:00-03:00`).getTime();
+  const media = source.map((row, index) => {
+    const scale = accountFactor * periodFactor;
+    const views = Math.round(row[2] * scale);
+    const reach = Math.round(row[3] * scale);
+    const likes = Math.round(row[4] * scale);
+    const comments = Math.round(row[5] * scale);
+    const saved = Math.round(row[6] * scale);
+    const shares = Math.round(row[7] * scale);
+    return { id: `demo-${accountId || "principal"}-${period}-${index}`, caption: row[0], media_type: row[1], permalink: "", timestamp: new Date(baseDate - index * 4 * 24 * 60 * 60 * 1000).toISOString(), thumbnail_url: "", likes, comments, views, reach, shares, saved, interactions: likes + comments + shares + saved };
+  });
+  const summary = media.reduce((totals, item) => ({ views: totals.views + item.views, reach: totals.reach + item.reach, interactions: totals.interactions + item.interactions }), { views: 0, reach: 0, interactions: 0 });
+  return { connected: true, period_days: period, synced_at: new Date().toISOString(), account: { username, account_type: "DEMONSTRAÇÃO", profile_picture_url: null, followers: Math.round(48200 * accountFactor), media_count: 286 }, summary: { ...summary, engagement: summary.reach ? Number(((summary.interactions / summary.reach) * 100).toFixed(2)) : 0 }, media };
 }
 
 function MetricCard({ icon, tone, label, value, detail, positive }: { icon: React.ReactNode; tone: string; label: string; value: string; detail: string; positive?: boolean }) {
