@@ -104,17 +104,7 @@ function runRequest<T>(
   }));
 }
 
-export async function listCaptures(workspaceId: string) {
-  if (usesCloud(workspaceId) && supabase) {
-    const { data, error } = await supabase
-      .from("capture_items")
-      .select("id,user_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
-      .eq("user_id", workspaceId)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error("Não foi possível carregar suas inspirações sincronizadas.");
-    return (data as CaptureRow[]).map(rowToCapture);
-  }
-
+async function listLocalCaptures(workspaceId: string) {
   const database = await openDatabase();
   return new Promise<CaptureItem[]>((resolve, reject) => {
     const transaction = database.transaction(storeName, "readonly");
@@ -122,6 +112,7 @@ export async function listCaptures(workspaceId: string) {
     const request = index.getAll(IDBKeyRange.only(workspaceId));
     request.onsuccess = () => {
       const captures = (request.result as CaptureItem[])
+        .map((capture) => ({ ...capture, storagePath: capture.storagePath || null }))
         .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
       resolve(captures);
     };
@@ -134,6 +125,82 @@ export async function listCaptures(workspaceId: string) {
   });
 }
 
+async function saveCloudCapture(capture: CaptureItem, migrating = false) {
+  if (!supabase) throw new Error("A sincronização do Inbox não está disponível.");
+  let storagePath: string | null = null;
+  if (capture.blob && capture.fileName) {
+    storagePath = `${capture.workspaceId}/${capture.id}/${safeFileName(capture.fileName)}`;
+    const { error: uploadError } = await supabase.storage
+      .from(captureBucket)
+      .upload(storagePath, capture.blob, {
+        contentType: capture.mimeType || undefined,
+        upsert: migrating,
+      });
+    if (uploadError) throw new Error("Não foi possível enviar o arquivo da captura.");
+  }
+
+  const values = {
+    id: capture.id,
+    user_id: capture.workspaceId,
+    kind: capture.kind,
+    title: capture.title,
+    body_text: capture.text,
+    source_url: capture.url,
+    tags: capture.tags,
+    file_name: capture.fileName,
+    mime_type: capture.mimeType,
+    file_size: capture.fileSize,
+    storage_path: storagePath,
+    created_at: capture.createdAt,
+  };
+  const query = migrating
+    ? supabase.from("capture_items").upsert(values, { onConflict: "id" })
+    : supabase.from("capture_items").insert(values);
+  const { data, error } = await query
+    .select("id,user_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
+    .single();
+
+  if (error || !data) {
+    if (storagePath) await supabase.storage.from(captureBucket).remove([storagePath]);
+    throw new Error("Não foi possível salvar a captura sincronizada.");
+  }
+  return rowToCapture(data as CaptureRow);
+}
+
+export async function listCaptures(workspaceId: string) {
+  if (usesCloud(workspaceId) && supabase) {
+    const { data, error } = await supabase
+      .from("capture_items")
+      .select("id,user_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
+      .eq("user_id", workspaceId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error("Não foi possível carregar suas inspirações sincronizadas.");
+    const cloudCaptures = (data as CaptureRow[]).map(rowToCapture);
+    const cloudIds = new Set(cloudCaptures.map((capture) => capture.id));
+    const localCaptures = await listLocalCaptures(workspaceId).catch(() => []);
+    const migratedCaptures: CaptureItem[] = [];
+    const pendingLocalCaptures: CaptureItem[] = [];
+
+    for (const localCapture of localCaptures) {
+      if (cloudIds.has(localCapture.id)) {
+        await runRequest("readwrite", (store) => store.delete(localCapture.id)).catch(() => undefined);
+        continue;
+      }
+      try {
+        const migrated = await saveCloudCapture(localCapture, true);
+        migratedCaptures.push(migrated);
+        await runRequest("readwrite", (store) => store.delete(localCapture.id));
+      } catch {
+        pendingLocalCaptures.push(localCapture);
+      }
+    }
+
+    return [...cloudCaptures, ...migratedCaptures, ...pendingLocalCaptures]
+      .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+  }
+  return listLocalCaptures(workspaceId);
+}
+
 export async function saveCapture(input: NewCaptureItem) {
   const capture: CaptureItem = {
     ...input,
@@ -143,41 +210,7 @@ export async function saveCapture(input: NewCaptureItem) {
   };
 
   if (usesCloud(input.workspaceId) && supabase) {
-    let storagePath: string | null = null;
-    if (capture.blob && capture.fileName) {
-      storagePath = `${input.workspaceId}/${capture.id}/${safeFileName(capture.fileName)}`;
-      const { error: uploadError } = await supabase.storage
-        .from(captureBucket)
-        .upload(storagePath, capture.blob, {
-          contentType: capture.mimeType || undefined,
-          upsert: false,
-        });
-      if (uploadError) throw new Error("Não foi possível enviar o arquivo da captura.");
-    }
-
-    const { data, error } = await supabase
-      .from("capture_items")
-      .insert({
-        id: capture.id,
-        user_id: input.workspaceId,
-        kind: capture.kind,
-        title: capture.title,
-        body_text: capture.text,
-        source_url: capture.url,
-        tags: capture.tags,
-        file_name: capture.fileName,
-        mime_type: capture.mimeType,
-        file_size: capture.fileSize,
-        storage_path: storagePath,
-      })
-      .select("id,user_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
-      .single();
-
-    if (error || !data) {
-      if (storagePath) await supabase.storage.from(captureBucket).remove([storagePath]);
-      throw new Error("Não foi possível salvar a captura sincronizada.");
-    }
-    return rowToCapture(data as CaptureRow);
+    return saveCloudCapture(capture);
   }
 
   await runRequest("readwrite", (store) => store.put(capture));

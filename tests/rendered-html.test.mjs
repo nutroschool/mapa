@@ -266,6 +266,9 @@ test("implements a synchronized multimedia quick-capture inbox inside the script
   assert.match(storage, /capture-inbox/);
   assert.match(storage, /\.upload\(storagePath/);
   assert.match(storage, /\.download\(capture\.storagePath\)/);
+  assert.match(storage, /listLocalCaptures/);
+  assert.match(storage, /saveCloudCapture\(localCapture, true\)/);
+  assert.match(storage, /cloudIds\.has\(localCapture\.id\)/);
   assert.match(panel, /Inspirações/);
   assert.match(panel, /Adicionar às notas/);
   assert.match(panel, /loadCaptureBlob/);
