@@ -28,6 +28,10 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.doesNotMatch(page, /mapa-content-items-v1/);
   assert.match(page, /onClick=\{\(\) => changeMonth\(-1\)\}/);
   assert.match(page, /onClick=\{\(\) => setLibraryFilter\(filter\)\}/);
+  assert.match(page, /const libraryFilters: readonly LibraryFilter\[\] = \["Todos", "Em roteiro", "Em edição", "Agendados", "Prontos"\]/);
+  assert.match(page, /"Em edição": \["Edição"\]/);
+  assert.match(page, /Agendados: \["Agendado"\]/);
+  assert.match(page, /matchesLibraryFilter\(item, filter\)\)\.length/);
   assert.match(page, /onCreateFromPost=\{onCreateFromPost\}/);
   assert.match(page, /aria-label="Roteiro completo"/);
   assert.match(page, /Seu roteiro em um só lugar/);

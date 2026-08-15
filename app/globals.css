@@ -256,8 +256,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .library-head { padding: 20px 18px 15px; display: flex; justify-content: space-between; align-items: center; }
 .library-head h2 { margin: 5px 0 0; font: 800 17px var(--font-display); }
 .icon-button.dark { width: 34px; height: 34px; border: 0; color: var(--lime); background: var(--navy); }
-.library-filters { padding: 0 13px 12px; display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
-.library-filters button { border: 0; padding: 7px 9px; border-radius: 7px; background: transparent; color: #8b909d; font-size: 9px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.library-filters { padding: 0 13px 12px; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 4px; border-bottom: 1px solid var(--line); }
+.library-filters button { min-width: 0; grid-column: span 2; border: 0; padding: 7px 6px; border-radius: 7px; background: transparent; color: #8b909d; font-size: 9px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.library-filters button:nth-last-child(-n+2) { grid-column: span 3; }
 .library-filters button.active { color: var(--ink); background: #f1f2ec; }
 .library-filters span { margin-left: 3px; color: #879a2a; }
 .library-list { max-height: 650px; overflow-y: auto; padding: 7px; }

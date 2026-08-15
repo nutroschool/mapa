@@ -77,6 +77,7 @@ import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type View = "hoje" | "calendario" | "roteiros" | "inbox" | "desempenho";
 type Status = "Ideia" | "Roteiro" | "Gravação" | "Edição" | "Agendado" | "Publicado";
+type LibraryFilter = "Todos" | "Em roteiro" | "Em edição" | "Agendados" | "Prontos";
 type FunnelStage = "Topo de funil" | "Meio de funil" | "Fundo de funil";
 type CalendarSurface = "feed" | "story";
 
@@ -132,6 +133,13 @@ type ContentRow = {
 const initialContents: ContentItem[] = [];
 
 const statusOrder: Status[] = ["Ideia", "Roteiro", "Gravação", "Edição", "Agendado", "Publicado"];
+const libraryFilters: readonly LibraryFilter[] = ["Todos", "Em roteiro", "Em edição", "Agendados", "Prontos"];
+const libraryFilterStatuses: Record<Exclude<LibraryFilter, "Todos">, readonly Status[]> = {
+  "Em roteiro": ["Roteiro"],
+  "Em edição": ["Edição"],
+  Agendados: ["Agendado"],
+  Prontos: ["Agendado", "Publicado"],
+};
 const funnelStages: FunnelStage[] = ["Topo de funil", "Meio de funil", "Fundo de funil"];
 const weekDays = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
 const storageKey = "mapa-content-items-v2";
@@ -152,6 +160,10 @@ function dateIsoInTimeZone(date = new Date()) {
 }
 
 const todayIso = dateIsoInTimeZone();
+
+function matchesLibraryFilter(item: ContentItem, filter: LibraryFilter) {
+  return filter === "Todos" || libraryFilterStatuses[filter].includes(item.status);
+}
 
 function formatTodayHeading(date: string) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -2113,7 +2125,7 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   onOpenInbox: () => void;
   onNotify: (message: string) => void;
 }) {
-  const [libraryFilter, setLibraryFilter] = useState<"Todos" | "Em roteiro" | "Prontos">("Todos");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("Todos");
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [teleprompterOpen, setTeleprompterOpen] = useState(false);
   const [inspirationsOpen, setInspirationsOpen] = useState(false);
@@ -2121,11 +2133,7 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   const scriptText = useMemo(() => scriptTextFromItem(selected), [selected]);
   const currentStatusIndex = statusOrder.indexOf(selected.status);
   const nextStatus = statusOrder[currentStatusIndex + 1];
-  const visibleContents = contents.filter((item) => {
-    if (libraryFilter === "Em roteiro") return item.status === "Roteiro";
-    if (libraryFilter === "Prontos") return ["Agendado", "Publicado"].includes(item.status);
-    return true;
-  });
+  const visibleContents = contents.filter((item) => matchesLibraryFilter(item, libraryFilter));
   const totalWords = scriptText.trim() ? scriptText.trim().split(/\s+/).length : 0;
   const teleprompterSections = splitScriptIntoTeleprompterBlocks(scriptText)
     .map((text, index) => ({ id: `script-block-${index + 1}`, text }));
@@ -2165,7 +2173,16 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
               </div>
             </div>
             <div className="library-filters">
-              {(["Todos", "Em roteiro", "Prontos"] as const).map((filter) => <button key={filter} className={libraryFilter === filter ? "active" : ""} onClick={() => setLibraryFilter(filter)}>{filter}{filter === "Todos" && <span>{contents.length}</span>}</button>)}
+              {libraryFilters.map((filter) => (
+                <button
+                  key={filter}
+                  className={libraryFilter === filter ? "active" : ""}
+                  aria-pressed={libraryFilter === filter}
+                  onClick={() => setLibraryFilter(filter)}
+                >
+                  {filter}<span>{contents.filter((item) => matchesLibraryFilter(item, filter)).length}</span>
+                </button>
+              ))}
             </div>
             <div className="library-list">
               {visibleContents.map((item) => (
