@@ -29,19 +29,17 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /onClick=\{\(\) => changeMonth\(-1\)\}/);
   assert.match(page, /onClick=\{\(\) => setLibraryFilter\(filter\)\}/);
   assert.match(page, /onCreateFromPost=\{onCreateFromPost\}/);
-  assert.match(page, /INTENSIFICADOR DE MISTÉRIO/);
-  assert.match(page, /APRESENTAÇÃO E CTAs FINAIS/);
-  assert.match(page, /CAPTION PRONTA · LEGENDA/);
-  assert.equal((page.match(/number: "(?:0[1-9]|10)"/g) ?? []).length, 10);
-  assert.match(page, /JSON\.stringify\(nextDocument\)/);
+  assert.match(page, /aria-label="Roteiro completo"/);
+  assert.match(page, /Seu roteiro em um só lugar/);
+  assert.match(page, /Cada linha em branco vira um novo bloco no teleprompter/);
+  assert.match(page, /onUpdate\("script", event\.target\.value\)/);
+  assert.match(page, /legacyScriptBlockIds/);
+  assert.match(page, /normalizeLegacyScriptItem/);
+  assert.match(page, /NOTAS IMPORTADAS DOS BLOCOS ANTERIORES/);
   assert.match(page, /sidebar-is-collapsed/);
   assert.match(page, /library-is-collapsed/);
-  assert.match(page, /contentEditable/);
-  assert.match(page, /event\.metaKey \|\| event\.ctrlKey/);
-  assert.match(page, /Aplicar ou remover negrito na seleção/);
-  assert.match(page, /sanitizeRichTextHtml/);
-  assert.match(page, /Escolher outra cor da fonte/);
-  assert.match(page, /Adicionar nota ao bloco/);
+  assert.doesNotMatch(page, /contentEditable/);
+  assert.doesNotMatch(page, /script-block-card/);
   assert.match(page, /Etapa de funil/);
   assert.match(page, /Topo de funil/);
   assert.match(page, /Meio de funil/);
@@ -57,8 +55,14 @@ test("keeps local storage versioned and every visible button wired", async () =>
   assert.match(page, /Fase: \{item\.status\}/);
   assert.match(page, /voltou à fase anterior/);
   assert.match(page, /calendar-progress/);
-  assert.match(page, /roteiros no mês/);
-  assert.match(page, /vídeos publicados/);
+  assert.match(page, /calendar-surface-switcher/);
+  assert.match(page, />FEED</);
+  assert.match(page, />STORY</);
+  assert.match(page, /item\.format !== "Stories"/);
+  assert.match(page, /item\.format === "Stories"/);
+  assert.match(page, /onAdd\(undefined, addFormat\)/);
+  assert.match(page, /roteiros em/);
+  assert.match(page, /publicados em/);
   assert.match(page, /statusFilter/);
   assert.match(page, /calendar-item status-\$\{item\.status/);
   assert.match(page, /As cores mostram a fase/);
@@ -200,17 +204,45 @@ test("opens a complete teleprompter from the recording phase", async () => {
 
   assert.match(page, /selected\.status === "Gravação"/);
   assert.match(page, /Abrir teleprompter/);
-  assert.match(page, /definition\.id !== "caption"/);
+  assert.match(page, /splitScriptIntoTeleprompterBlocks\(scriptText\)/);
+  assert.match(page, /script-block-\$\{index \+ 1\}/);
   assert.match(page, /requestAnimationFrame\(tick\)/);
   assert.match(page, /Velocidade/);
   assert.match(page, /Espelhar/);
   assert.match(page, /Tela cheia/);
   assert.match(page, /event\.code === "Space"/);
-  assert.match(page, /reader\.scrollTop \+= speed/);
+  assert.match(page, /scrollRemainderRef\.current \+= speed \* elapsed/);
+  assert.match(page, /Math\.floor\(scrollRemainderRef\.current\)/);
+  assert.match(page, /reader\.scrollTop = Math\.min\(maximum, reader\.scrollTop \+ wholePixels\)/);
   assert.match(styles, /\.teleprompter-layer/);
   assert.match(styles, /\.teleprompter-reader\.mirrored/);
   assert.match(styles, /\.teleprompter-focus-line/);
+  assert.match(styles, /\.teleprompter-copy p \{[^}]*margin: 0 0 1\.55em;[^}]*white-space: pre-wrap;/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.teleprompter-controls/);
+});
+
+test("prepares a safe one-time conversion from ten legacy blocks to one script", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20260815175447_unify_legacy_script_blocks.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(migration, /create schema if not exists private/i);
+  assert.match(migration, /create table if not exists private\.content_items_script_backup_20260815/i);
+  assert.match(migration, /source_script_md5 text not null/i);
+  assert.match(migration, /revoke all on table private\.content_items_script_backup_20260815\s+from public, anon, authenticated/is);
+  assert.match(migration, /insert into private\.content_items_script_backup_20260815[\s\S]+?from public\.content_items[\s\S]+?on conflict \(content_id\) do nothing/i);
+  assert.ok(
+    migration.indexOf("insert into private.content_items_script_backup_20260815") <
+      migration.lastIndexOf("update public.content_items"),
+    "the private backup must be written before any script is converted",
+  );
+  assert.match(migration, /legacy_source as materialized/i);
+  assert.match(migration, /jsonb_typeof\(document -> 'blocks'\) = 'object'/i);
+  assert.match(migration, /string_agg\(block_text, E'\\n\\n' order by position\)/i);
+  assert.match(migration, /NOTAS IMPORTADAS DOS BLOCOS ANTERIORES/);
+  assert.match(migration, /position\('NOTAS IMPORTADAS DOS BLOCOS ANTERIORES' in content\.notes\)/);
+  assert.match(migration, /where content\.id = merged\.id/);
 });
 
 test("separates content by Instagram account and synchronizes assignments with RLS", async () => {

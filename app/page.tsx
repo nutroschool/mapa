@@ -38,13 +38,10 @@ import {
   PanelLeftOpen,
   Play,
   Plus,
-  Bold,
-  Palette,
   Save,
   Search,
   Settings2,
   Sparkles,
-  StickyNote,
   Target,
   Type,
   Trash2,
@@ -81,6 +78,7 @@ import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 type View = "hoje" | "calendario" | "roteiros" | "inbox" | "desempenho";
 type Status = "Ideia" | "Roteiro" | "Gravação" | "Edição" | "Agendado" | "Publicado";
 type FunnelStage = "Topo de funil" | "Meio de funil" | "Fundo de funil";
+type CalendarSurface = "feed" | "story";
 
 type WorkspaceInstagramAccount = {
   id: string;
@@ -204,133 +202,108 @@ function kindLabelForCapture(kind: CaptureItem["kind"]) {
   return ({ audio: "Áudio", link: "Link", image: "Print", text: "Texto", pdf: "PDF" })[kind];
 }
 
-const scriptBlockDefinitions = [
-  { id: "headline", number: "01", title: "HEADLINE", helper: "A frase que interrompe o scroll", placeholder: "Escreva a headline principal...", rows: 3 },
-  { id: "mystery", number: "02", title: "INTENSIFICADOR DE MISTÉRIO", helper: "Aumente a curiosidade sem entregar a resposta", placeholder: "Crie tensão e abra uma lacuna de curiosidade...", rows: 4 },
-  { id: "saveCta", number: "03", title: "CTA DE SALVAMENTO", helper: "Dê um motivo claro para salvar agora", placeholder: "Convide a pessoa a salvar este conteúdo...", rows: 3 },
-  { id: "notableOne", number: "04", title: "CONTEÚDO NOTÁVEL 1", helper: "Primeiro elemento memorável e útil", placeholder: "Desenvolva o primeiro conteúdo notável...", rows: 5 },
-  { id: "notableTwo", number: "05", title: "CONTEÚDO NOTÁVEL 2", helper: "Aprofunde com uma segunda ideia forte", placeholder: "Desenvolva o segundo conteúdo notável...", rows: 5 },
-  { id: "shareCta", number: "06", title: "CTA DE COMPARTILHAMENTO", helper: "Conecte o tema a alguém que precisa recebê-lo", placeholder: "Convide a pessoa a compartilhar...", rows: 3 },
-  { id: "notableThree", number: "07", title: "CONTEÚDO NOTÁVEL", helper: "Entregue a revelação ou aplicação prática", placeholder: "Entregue a revelação e o valor prático...", rows: 5 },
-  { id: "belief", number: "08", title: "CRENÇA", helper: "A ideia central que deve permanecer", placeholder: "Registre a crença que sustenta a mensagem...", rows: 4 },
-  { id: "presentation", number: "09", title: "APRESENTAÇÃO E CTAs FINAIS", helper: "Apresente-se e feche com a próxima ação", placeholder: "Escreva sua apresentação e os CTAs finais...", rows: 5 },
-  { id: "caption", number: "10", title: "CAPTION PRONTA · LEGENDA", helper: "Legenda final pronta para copiar e publicar", placeholder: "Escreva a legenda completa, incluindo CTA e hashtags...", rows: 7 },
+const legacyScriptBlocks = [
+  { id: "headline", label: "BLOCO 01 · HEADLINE" },
+  { id: "mystery", label: "BLOCO 02 · INTENSIFICADOR DE MISTÉRIO" },
+  { id: "saveCta", label: "BLOCO 03 · CTA DE SALVAMENTO" },
+  { id: "notableOne", label: "BLOCO 04 · CONTEÚDO NOTÁVEL 1" },
+  { id: "notableTwo", label: "BLOCO 05 · CONTEÚDO NOTÁVEL 2" },
+  { id: "shareCta", label: "BLOCO 06 · CTA DE COMPARTILHAMENTO" },
+  { id: "notableThree", label: "BLOCO 07 · CONTEÚDO NOTÁVEL 3" },
+  { id: "belief", label: "BLOCO 08 · CRENÇA" },
+  { id: "presentation", label: "BLOCO 09 · APRESENTAÇÃO E CTAs FINAIS" },
+  { id: "caption", label: "BLOCO 10 · CAPTION PRONTA · LEGENDA" },
 ] as const;
+const legacyScriptBlockIds = legacyScriptBlocks.map((block) => block.id);
+const importedBlockNotesHeading = "NOTAS IMPORTADAS DOS BLOCOS ANTERIORES";
 
-type ScriptBlockId = (typeof scriptBlockDefinitions)[number]["id"];
-type ScriptBlockDefinition = (typeof scriptBlockDefinitions)[number];
-type ScriptBlock = { html: string; note: string; color: string };
-type ScriptDocument = { version: 2; blocks: Record<ScriptBlockId, ScriptBlock> };
-
-const scriptColorPresets = ["#333949", "#b84f3f", "#4770b8", "#7855ad", "#397a57"];
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function plainTextToRichHtml(value: string) {
-  return escapeHtml(value).replace(/\r?\n/g, "<br>");
-}
-
-function sanitizeRichTextHtml(value: string) {
+function richTextToMultilineText(value: string) {
   return value
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, (tag) => {
-      if (/^<br\s*\/?\s*>$/i.test(tag)) return "<br>";
-      if (/^<(?:b|strong)(?:\s[^>]*)?>$/i.test(tag)) return "<strong>";
-      if (/^<\/(?:b|strong)>$/i.test(tag)) return "</strong>";
-      if (/^<\/(?:div|p)>$/i.test(tag)) return "<br>";
-      return "";
-    })
-    .replace(/(?:<br>){3,}/g, "<br><br>");
-}
-
-function richTextToPlainText(value: string) {
-  return value
-    .replace(/<br>/gi, " ")
-    .replace(/<[^>]*>/g, " ")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/(?:div|p)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
-    .replace(/\s+/g, " ")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(?:39|x27);/gi, "'")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function legacyScriptConversion(value: string) {
+  if (!value.trim().startsWith("{")) return null;
+
+  try {
+    const parsed = JSON.parse(value) as { version?: unknown; blocks?: Record<string, unknown> };
+    if ((parsed.version !== 1 && parsed.version !== 2) || !parsed.blocks || typeof parsed.blocks !== "object") return null;
+
+    const scriptParts: string[] = [];
+    const noteParts: string[] = [];
+    legacyScriptBlockIds.forEach((id, index) => {
+      const definition = legacyScriptBlocks[index];
+      const value = parsed.blocks?.[id];
+      if (!value || typeof value !== "object") return;
+      const block = value as { html?: unknown; text?: unknown; note?: unknown };
+      const htmlText = typeof block.html === "string" ? richTextToMultilineText(block.html) : "";
+      const plainText = typeof block.text === "string" ? block.text.replace(/\r\n?/g, "\n").trim() : "";
+      const blockText = htmlText || plainText;
+      const blockNote = typeof block.note === "string" ? block.note.replace(/\r\n?/g, "\n").trim() : "";
+      if (blockText) scriptParts.push(blockText);
+      if (blockNote) noteParts.push(`${definition.label}\n${blockNote}`);
+    });
+
+    return {
+      script: scriptParts.join("\n\n"),
+      importedNotes: noteParts.join("\n\n"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLegacyScriptItem(item: ContentItem) {
+  const conversion = legacyScriptConversion(item.script);
+  if (!conversion) return item;
+
+  const importedNotes = conversion.importedNotes && !item.notes.includes(importedBlockNotesHeading)
+    ? `${importedBlockNotesHeading}\n\n${conversion.importedNotes}`
+    : "";
+
+  return {
+    ...item,
+    script: conversion.script,
+    notes: [item.notes.trim(), importedNotes].filter(Boolean).join("\n\n"),
+  };
 }
 
 function normalizeFunnelStage(value: string): FunnelStage {
   return funnelStages.includes(value as FunnelStage) ? value as FunnelStage : "Topo de funil";
 }
 
-function createEmptyScriptDocument(): ScriptDocument {
-  return {
-    version: 2,
-    blocks: Object.fromEntries(
-      scriptBlockDefinitions.map((definition) => [
-        definition.id,
-        { html: "", note: "", color: scriptColorPresets[0] },
-      ]),
-    ) as Record<ScriptBlockId, ScriptBlock>,
-  };
-}
+function scriptTextFromItem(item: ContentItem) {
+  const legacy = legacyScriptConversion(item.script);
+  if (legacy) return legacy.script;
+  if (item.script.trim()) return item.script.replace(/\r\n?/g, "\n");
 
-function parseScriptDocument(item: ContentItem): ScriptDocument {
-  const document = createEmptyScriptDocument();
-
-  if (item.script.trim()) {
-    try {
-      const parsed = JSON.parse(item.script) as { version?: unknown; blocks?: Record<string, unknown> };
-      if ((parsed.version === 1 || parsed.version === 2) && parsed.blocks && typeof parsed.blocks === "object") {
-        scriptBlockDefinitions.forEach((definition) => {
-          const value = parsed.blocks?.[definition.id];
-          if (!value || typeof value !== "object") return;
-          const block = value as Partial<ScriptBlock> & { text?: string; bold?: boolean };
-          const legacyText = typeof block.text === "string" ? block.text : "";
-          const legacyHtml = plainTextToRichHtml(legacyText);
-          document.blocks[definition.id] = {
-            html: typeof block.html === "string"
-              ? sanitizeRichTextHtml(block.html)
-              : block.bold === true && legacyHtml
-                ? `<strong>${legacyHtml}</strong>`
-                : legacyHtml,
-            note: typeof block.note === "string" ? block.note : "",
-            color: typeof block.color === "string" ? block.color : scriptColorPresets[0],
-          };
-        });
-        return document;
-      }
-    } catch {
-      // Roteiros antigos em texto puro são convertidos abaixo.
-    }
-  }
-
-  const legacyText = [item.hook, item.script, item.cta, item.notes]
+  return [item.hook, item.cta]
     .map((value) => value.trim())
     .filter(Boolean)
     .join("\n\n");
-  const headingPattern = /(?:^|\n)\s*(?:BLOCO\s*([1-9])\s*[·.\-–—:]\s*(?:HEADLINE|INTENSIFICADOR\s+DE\s+MISTÉRIO|CTA\s+DE\s+SALVAMENTO|CONTEÚDO\s+NOTÁVEL(?:\s*[123])?|CTA\s+DE\s+COMPARTILHAMENTO|CRENÇA|APRESENTAÇÃO\s+E\s+CTAS\s+FINAIS)|(?:BLOCO\s*10\s*[·.\-–—:]\s*)?CAPTION\s+PRONTA(?:\s+LEGENDA)?)\s*/gim;
-  const headings = Array.from(legacyText.matchAll(headingPattern));
+}
 
-  if (headings.length) {
-    headings.forEach((heading, index) => {
-      const blockNumber = heading[1] ? Number(heading[1]) : 10;
-      const definition = scriptBlockDefinitions[blockNumber - 1];
-      if (!definition) return;
-      const start = (heading.index ?? 0) + heading[0].length;
-      const end = headings[index + 1]?.index ?? legacyText.length;
-      document.blocks[definition.id].html = plainTextToRichHtml(legacyText.slice(start, end).trim());
-    });
-    return document;
-  }
-
-  document.blocks.headline.html = plainTextToRichHtml(item.hook.trim());
-  document.blocks.notableOne.html = plainTextToRichHtml(item.script.trim());
-  document.blocks.presentation.html = plainTextToRichHtml(item.cta.trim());
-  document.blocks.presentation.note = item.notes.trim();
-  return document;
+function splitScriptIntoTeleprompterBlocks(value: string) {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .split(/\n\s*\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
 }
 
 function formatShortDate(date: string) {
@@ -348,7 +321,7 @@ function formatFileSize(bytes: number) {
 }
 
 function rowToContent(row: ContentRow): ContentItem {
-  return {
+  return normalizeLegacyScriptItem({
     id: row.id,
     title: row.title,
     format: row.format,
@@ -367,7 +340,7 @@ function rowToContent(row: ContentRow): ContentItem {
     driveMimeType: row.drive_mime_type,
     driveFileSize: row.drive_file_size,
     driveUploadedAt: row.drive_uploaded_at,
-  };
+  });
 }
 
 function contentToRow(item: ContentItem, userId: string) {
@@ -639,10 +612,14 @@ function Workspace({ user }: { user: User | null }) {
           const parsed = JSON.parse(saved);
           setContents(
             Array.isArray(parsed)
-              ? parsed.map((item) => ({
+              ? parsed.map((item) => normalizeLegacyScriptItem({
                   ...item,
                   id: String(item.id),
                   pillar: normalizeFunnelStage(String(item.pillar || "")),
+                  hook: typeof item.hook === "string" ? item.hook : "",
+                  script: typeof item.script === "string" ? item.script : "",
+                  cta: typeof item.cta === "string" ? item.cta : "",
+                  notes: typeof item.notes === "string" ? item.notes : "",
                   instagramAccountId: typeof item.instagramAccountId === "string" ? item.instagramAccountId : null,
                   driveFileId: item.driveFileId || null,
                   driveFileName: item.driveFileName || null,
@@ -650,7 +627,7 @@ function Workspace({ user }: { user: User | null }) {
                   driveMimeType: item.driveMimeType || null,
                   driveFileSize: typeof item.driveFileSize === "number" ? item.driveFileSize : null,
                   driveUploadedAt: item.driveUploadedAt || null,
-                }))
+                } as ContentItem))
               : initialContents,
           );
         } catch {
@@ -1077,8 +1054,8 @@ function Workspace({ user }: { user: User | null }) {
     announce(user ? "Novo conteúdo salvo na nuvem." : "Novo conteúdo adicionado ao MAPA.");
   }
 
-  function openAdd(date?: string) {
-    if (date) setNewItem((item) => ({ ...item, date }));
+  function openAdd(date?: string, format?: ContentItem["format"]) {
+    if (date || format) setNewItem((item) => ({ ...item, ...(date ? { date } : {}), ...(format ? { format } : {}) }));
     setAddOpen(true);
   }
 
@@ -2003,9 +1980,10 @@ function TodayView({
   );
 }
 
-function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: ContentItem[]; onAdd: (date?: string) => void; onMove: (id: string, date: string) => void; onSelect: (id: string) => void }) {
+function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: ContentItem[]; onAdd: (date?: string, format?: ContentItem["format"]) => void; onMove: (id: string, date: string) => void; onSelect: (id: string) => void }) {
   const referenceToday = new Date(`${todayIso}T12:00:00`);
   const [month, setMonth] = useState(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1));
+  const [surface, setSurface] = useState<CalendarSurface>("feed");
   const [filterOpen, setFilterOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"Todas" | Status>("Todas");
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -2023,9 +2001,14 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
   const monthName = monthNameRaw.charAt(0).toUpperCase() + monthNameRaw.slice(1);
   const monthPrefix = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
   const monthContents = contents.filter((item) => item.date.startsWith(monthPrefix));
-  const monthlyScripts = monthContents.filter((item) => item.status !== "Ideia" || item.script.trim()).length;
-  const monthlyPublished = monthContents.filter((item) => item.status === "Publicado").length;
-  const filteredByStatus = statusFilter === "Todas" ? contents : contents.filter((item) => item.status === statusFilter);
+  const feedCount = monthContents.filter((item) => item.format !== "Stories").length;
+  const storyCount = monthContents.filter((item) => item.format === "Stories").length;
+  const surfaceContents = contents.filter((item) => surface === "story" ? item.format === "Stories" : item.format !== "Stories");
+  const surfaceMonthContents = surfaceContents.filter((item) => item.date.startsWith(monthPrefix));
+  const monthlyScripts = surfaceMonthContents.filter((item) => item.status !== "Ideia" || item.script.trim()).length;
+  const monthlyPublished = surfaceMonthContents.filter((item) => item.status === "Publicado").length;
+  const filteredByStatus = statusFilter === "Todas" ? surfaceContents : surfaceContents.filter((item) => item.status === statusFilter);
+  const addFormat: ContentItem["format"] = surface === "story" ? "Stories" : "Reel";
 
   function changeMonth(offset: number) {
     setMonth(new Date(year, monthIndex + offset, 1));
@@ -2035,9 +2018,13 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
     <section className="panel calendar-panel">
       <div className="calendar-toolbar">
         <div className="month-switcher"><button className="icon-button" aria-label="Mês anterior" onClick={() => changeMonth(-1)}><ChevronLeft size={19} /></button><h2>{monthName} <span>{year}</span></h2><button className="icon-button" aria-label="Próximo mês" onClick={() => changeMonth(1)}><ChevronRight size={19} /></button></div>
+        <div className="calendar-surface-switcher" role="group" aria-label="Separar calendário por tipo de publicação">
+          <button type="button" className={surface === "feed" ? "active" : ""} aria-pressed={surface === "feed"} onClick={() => setSurface("feed")}><LayoutDashboard size={16} /><span>FEED</span><strong>{feedCount}</strong></button>
+          <button type="button" className={surface === "story" ? "active" : ""} aria-pressed={surface === "story"} onClick={() => setSurface("story")}><MessageCircle size={16} /><span>STORY</span><strong>{storyCount}</strong></button>
+        </div>
         <div className="calendar-progress" aria-label="Progresso do mês">
-          <div><span className="progress-icon scripts"><FileText size={17} /></span><span><strong>{monthlyScripts}</strong><small>roteiros no mês</small></span></div>
-          <div><span className="progress-icon published"><CheckCircle2 size={17} /></span><span><strong>{monthlyPublished}</strong><small>vídeos publicados</small></span></div>
+          <div><span className="progress-icon scripts"><FileText size={17} /></span><span><strong>{monthlyScripts}</strong><small>roteiros em {surface === "story" ? "story" : "feed"}</small></span></div>
+          <div><span className="progress-icon published"><CheckCircle2 size={17} /></span><span><strong>{monthlyPublished}</strong><small>publicados em {surface === "story" ? "story" : "feed"}</small></span></div>
         </div>
         <div className="toolbar-actions">
           <div className="filter-wrap">
@@ -2045,7 +2032,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
             {filterOpen && <div className="filter-menu">{(["Todas", ...statusOrder] as const).map((status) => <button key={status} className={statusFilter === status ? "active" : ""} onClick={() => { setStatusFilter(status); setFilterOpen(false); }}>{statusFilter === status && <Check size={14} />}{status}</button>)}</div>}
           </div>
           <button className="button secondary small" onClick={() => setMonth(new Date(referenceToday.getFullYear(), referenceToday.getMonth(), 1))}>Hoje</button>
-          <button className="button primary small" onClick={() => onAdd()}><Plus size={16} /> Adicionar</button>
+          <button className="button primary small" onClick={() => onAdd(undefined, addFormat)}><Plus size={16} /> Adicionar</button>
         </div>
       </div>
       <div className="calendar-grid calendar-weekdays">{weekDays.map((day) => <div key={day}>{day}</div>)}</div>
@@ -2058,7 +2045,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
             <div
               className={`day-cell ${date === todayIso ? "current-day" : ""} ${dropDate === date ? "drop-target" : ""}`}
               key={date}
-              onDoubleClick={() => onAdd(date)}
+              onDoubleClick={() => onAdd(date, addFormat)}
               onDragEnter={(event) => {
                 event.preventDefault();
                 if (draggedId) setDropDate(date);
@@ -2079,7 +2066,7 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
                 if (itemId) onMove(itemId, date);
               }}
             >
-              <div className="day-number"><span>{day}</span>{dayItems.length > 0 && <button aria-label={`Adicionar em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={13} /></button>}</div>
+              <div className="day-number"><span>{day}</span>{dayItems.length > 0 && <button aria-label={`Adicionar em ${day} de ${monthName}`} onClick={() => onAdd(date, addFormat)}><Plus size={13} /></button>}</div>
               <div className="day-items">
                 {dayItems.slice(0, 3).map((item) => (
                   <button
@@ -2101,12 +2088,12 @@ function CalendarView({ contents, onAdd, onMove, onSelect }: { contents: Content
                   ><span className="calendar-phase-number">{statusOrder.indexOf(item.status) + 1}</span><strong>{item.title}</strong></button>
                 ))}
               </div>
-              {dayItems.length === 0 && <button className="day-add" aria-label={`Adicionar conteúdo em ${day} de ${monthName}`} onClick={() => onAdd(date)}><Plus size={14} /></button>}
+              {dayItems.length === 0 && <button className="day-add" aria-label={`Adicionar conteúdo em ${day} de ${monthName}`} onClick={() => onAdd(date, addFormat)}><Plus size={14} /></button>}
             </div>
           );
         })}
       </div>
-      <div className="calendar-legend">{statusOrder.map((status) => <span key={status}><i className={`status-${status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`} /> {status}</span>)}<small>As cores mostram a fase. Arraste um conteúdo para mudar o dia.</small></div>
+      <div className="calendar-legend">{statusOrder.map((status) => <span key={status}><i className={`status-${status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`} /> {status}</span>)}<small>Exibindo {surface === "story" ? "STORY" : "FEED"}. As cores mostram a fase.</small></div>
     </section>
   );
 }
@@ -2131,7 +2118,7 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   const [teleprompterOpen, setTeleprompterOpen] = useState(false);
   const [inspirationsOpen, setInspirationsOpen] = useState(false);
   const closeTeleprompter = useCallback(() => setTeleprompterOpen(false), []);
-  const scriptDocument = useMemo(() => parseScriptDocument(selected), [selected]);
+  const scriptText = useMemo(() => scriptTextFromItem(selected), [selected]);
   const currentStatusIndex = statusOrder.indexOf(selected.status);
   const nextStatus = statusOrder[currentStatusIndex + 1];
   const visibleContents = contents.filter((item) => {
@@ -2139,29 +2126,9 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
     if (libraryFilter === "Prontos") return ["Agendado", "Publicado"].includes(item.status);
     return true;
   });
-  const totalWords = scriptBlockDefinitions.reduce((total, definition) => {
-    const text = richTextToPlainText(scriptDocument.blocks[definition.id].html);
-    return total + (text ? text.split(/\s+/).length : 0);
-  }, 0);
-  const teleprompterSections = scriptBlockDefinitions
-    .filter((definition) => definition.id !== "caption")
-    .map((definition) => ({
-      id: definition.id,
-      title: definition.title,
-      text: richTextToPlainText(scriptDocument.blocks[definition.id].html).trim(),
-    }))
-    .filter((section) => section.text);
-
-  function updateBlock(id: ScriptBlockId, patch: Partial<ScriptBlock>) {
-    const nextDocument: ScriptDocument = {
-      ...scriptDocument,
-      blocks: {
-        ...scriptDocument.blocks,
-        [id]: { ...scriptDocument.blocks[id], ...patch },
-      },
-    };
-    onUpdate("script", JSON.stringify(nextDocument));
-  }
+  const totalWords = scriptText.trim() ? scriptText.trim().split(/\s+/).length : 0;
+  const teleprompterSections = splitScriptIntoTeleprompterBlocks(scriptText)
+    .map((text, index) => ({ id: `script-block-${index + 1}`, text }));
 
   function useCaptureInNotes(capture: CaptureItem) {
     const reference = [
@@ -2251,22 +2218,22 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
           <label className="title-input"><span>TÍTULO</span><input value={selected.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
           <div className="brief-row"><span><CalendarDays size={15} /> {formatShortDate(selected.date)}</span><span><Clock3 size={15} /> {selected.duration}</span><span><Target size={15} /> Etapa: {selected.pillar}</span><label className="script-account-select"><Instagram size={15} /><select aria-label="Conta do Instagram deste roteiro" value={selected.instagramAccountId || ""} onChange={(event) => onUpdate("instagramAccountId", event.target.value)}><option value="">Sem conta definida</option>{instagramAccounts.map((account) => <option key={account.id} value={account.id}>@{account.username}</option>)}</select></label><button type="button" className={`script-inspiration-toggle ${inspirationsOpen ? "active" : ""}`} aria-expanded={inspirationsOpen} onClick={() => setInspirationsOpen((open) => !open)}><Lightbulb size={15} /> Inspirações</button></div>
           <div className="script-document-summary">
-            <div><Sparkles size={19} /><span><strong>Roteiro magnético em 10 blocos</strong><small>Escreva, formate e acrescente notas em cada etapa.</small></span></div>
+            <div><Sparkles size={19} /><span><strong>Seu roteiro em um só lugar</strong><small>Use uma linha em branco para separar os trechos de leitura.</small></span></div>
             <span>{totalWords} palavras · aprox. {Math.max(0, Math.ceil(totalWords / 2.2))} segundos</span>
           </div>
 
-          <div className="script-blocks">
-            {scriptBlockDefinitions.map((definition) => {
-              const block = scriptDocument.blocks[definition.id];
-              return (
-                <RichTextScriptBlock
-                  key={`${selected.id}:${definition.id}`}
-                  definition={definition}
-                  block={block}
-                  onChange={(patch) => updateBlock(definition.id, patch)}
-                />
-              );
-            })}
+          <div className="script-single-card">
+            <label htmlFor={`script-${selected.id}`}><strong>ROTEIRO</strong><small>Escreva livremente. Cada linha em branco vira um novo bloco no teleprompter.</small></label>
+            <textarea
+              id={`script-${selected.id}`}
+              className="script-single-editor"
+              aria-label="Roteiro completo"
+              rows={22}
+              value={scriptText}
+              onChange={(event) => onUpdate("script", event.target.value)}
+              placeholder={'Escreva ou cole o roteiro completo aqui...\n\nDeixe uma linha em branco entre os blocos para facilitar a leitura no teleprompter.'}
+            />
+            <div className="script-single-footer"><span>{teleprompterSections.length} {teleprompterSections.length === 1 ? "bloco de leitura" : "blocos de leitura"}</span><span>As quebras serão preservadas no teleprompter.</span></div>
           </div>
         </div>
         {inspirationsOpen && <ScriptInspirationPanel workspaceId={workspaceId} onClose={() => setInspirationsOpen(false)} onOpenInbox={onOpenInbox} onUseCapture={useCaptureInNotes} />}
@@ -2283,11 +2250,12 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   );
 }
 
-function Teleprompter({ title, sections, onClose }: { title: string; sections: { id: string; title: string; text: string }[]; onClose: () => void }) {
+function Teleprompter({ title, sections, onClose }: { title: string; sections: { id: string; text: string }[]; onClose: () => void }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const readerRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<number | null>(null);
   const previousTimeRef = useRef<number | null>(null);
+  const scrollRemainderRef = useRef(0);
   const progressRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(34);
@@ -2301,6 +2269,7 @@ function Teleprompter({ title, sections, onClose }: { title: string; sections: {
     const reader = readerRef.current;
     if (reader) reader.scrollTo({ top: 0, behavior: "smooth" });
     progressRef.current = 0;
+    scrollRemainderRef.current = 0;
     setProgress(0);
     setPlaying(false);
   }, []);
@@ -2317,8 +2286,14 @@ function Teleprompter({ title, sections, onClose }: { title: string; sections: {
       if (!reader) return;
       const previous = previousTimeRef.current ?? time;
       previousTimeRef.current = time;
-      reader.scrollTop += speed * ((time - previous) / 1000);
       const maximum = Math.max(0, reader.scrollHeight - reader.clientHeight);
+      const elapsed = Math.min(0.1, Math.max(0, (time - previous) / 1000));
+      scrollRemainderRef.current += speed * elapsed;
+      const wholePixels = Math.floor(scrollRemainderRef.current);
+      if (wholePixels > 0) {
+        reader.scrollTop = Math.min(maximum, reader.scrollTop + wholePixels);
+        scrollRemainderRef.current -= wholePixels;
+      }
       const nextProgress = maximum ? Math.min(100, (reader.scrollTop / maximum) * 100) : 100;
       const roundedProgress = Math.round(nextProgress);
       if (roundedProgress !== progressRef.current) {
@@ -2394,7 +2369,7 @@ function Teleprompter({ title, sections, onClose }: { title: string; sections: {
             {sections.map((section) => <p key={section.id}>{section.text}</p>)}
           </div>
         ) : (
-          <div className="teleprompter-empty"><FileText size={32} /><strong>Este roteiro ainda está vazio</strong><p>Volte ao editor, preencha os blocos e abra o teleprompter novamente.</p></div>
+          <div className="teleprompter-empty"><FileText size={32} /><strong>Este roteiro ainda está vazio</strong><p>Volte ao editor, escreva o roteiro e abra o teleprompter novamente.</p></div>
         )}
         <div className="teleprompter-spacer end" />
       </main>
@@ -2410,111 +2385,6 @@ function Teleprompter({ title, sections, onClose }: { title: string; sections: {
       </footer>
       <div className="teleprompter-shortcuts">Espaço: iniciar/pausar · ↑ ↓: velocidade · Esc: fechar</div>
     </div>
-  );
-}
-
-function RichTextScriptBlock({ definition, block, onChange }: { definition: ScriptBlockDefinition; block: ScriptBlock; onChange: (patch: Partial<ScriptBlock>) => void }) {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const [noteOpen, setNoteOpen] = useState(Boolean(block.note));
-  const safeHtml = useMemo(() => sanitizeRichTextHtml(block.html), [block.html]);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || document.activeElement === editor || editor.innerHTML === safeHtml) return;
-    editor.innerHTML = safeHtml;
-  }, [safeHtml]);
-
-  function commitEditor() {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const html = sanitizeRichTextHtml(editor.innerHTML);
-    if (editor.innerHTML !== html) editor.innerHTML = html;
-    if (html !== safeHtml) onChange({ html });
-  }
-
-  function toggleBold() {
-    const editor = editorRef.current;
-    if (!editor) return;
-    if (document.activeElement !== editor) editor.focus();
-    document.execCommand("bold", false);
-    commitEditor();
-  }
-
-  function handleEditorKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
-      event.preventDefault();
-      toggleBold();
-    }
-  }
-
-  function handlePaste(event: React.ClipboardEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const plainText = event.clipboardData.getData("text/plain");
-    document.execCommand("insertHTML", false, plainTextToRichHtml(plainText));
-    commitEditor();
-  }
-
-  return (
-    <section className={`script-block-card ${definition.id === "headline" ? "featured" : ""} ${definition.id === "caption" ? "caption-block" : ""}`}>
-      <div className="script-block-header">
-        <div className="script-block-identity">
-          <span className="number-badge">{definition.number}</span>
-          <span><strong>{definition.id === "caption" ? definition.title : `BLOCO ${definition.number} · ${definition.title}`}</strong><small>{definition.helper}</small></span>
-        </div>
-        <div className="script-block-tools" aria-label={`Formatação do bloco ${definition.number}`}>
-          <button
-            className="format-tool"
-            aria-label="Aplicar ou remover negrito na seleção"
-            title="Negrito na seleção (Ctrl/Cmd+B)"
-            onClick={toggleBold}
-            onMouseDown={(event) => event.preventDefault()}
-          ><Bold size={16} /></button>
-          <div className="font-colors" aria-label="Cor da fonte">
-            <Palette size={16} />
-            {scriptColorPresets.map((color) => (
-              <button
-                key={color}
-                className={block.color.toLowerCase() === color.toLowerCase() ? "color-swatch active" : "color-swatch"}
-                style={{ backgroundColor: color }}
-                aria-label={`Usar cor ${color}`}
-                title={`Cor ${color}`}
-                onClick={() => onChange({ color })}
-              />
-            ))}
-            <label className="custom-color" title="Escolher outra cor">
-              <input type="color" value={block.color} aria-label="Escolher outra cor da fonte" onChange={(event) => onChange({ color: event.target.value })} />
-            </label>
-          </div>
-          <button
-            className={`format-tool note-tool ${noteOpen ? "active" : ""}`}
-            aria-label={noteOpen ? "Ocultar nota do bloco" : "Adicionar nota ao bloco"}
-            title={noteOpen ? "Ocultar nota" : "Adicionar nota"}
-            onClick={() => setNoteOpen((open) => !open)}
-          ><StickyNote size={16} /></button>
-        </div>
-      </div>
-      <div
-        ref={editorRef}
-        className="script-block-editor"
-        contentEditable
-        role="textbox"
-        aria-label={`Texto do bloco ${definition.number} · ${definition.title}`}
-        aria-multiline="true"
-        data-placeholder={definition.placeholder}
-        suppressContentEditableWarning
-        style={{ color: block.color, minHeight: `${Math.max(104, definition.rows * 27)}px` }}
-        onInput={commitEditor}
-        onBlur={commitEditor}
-        onKeyDown={handleEditorKeyDown}
-        onPaste={handlePaste}
-      />
-      {noteOpen && (
-        <div className="block-note">
-          <StickyNote size={16} />
-          <textarea rows={2} value={block.note} onChange={(event) => onChange({ note: event.target.value })} placeholder="Adicione uma nota de gravação, cena, corte ou referência..." />
-        </div>
-      )}
-    </section>
   );
 }
 
