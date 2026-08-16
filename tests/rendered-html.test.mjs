@@ -306,10 +306,13 @@ test("implements a synchronized multimedia quick-capture inbox inside the script
   assert.match(storage, /saveCloudCapture\(localCapture, true\)/);
   assert.match(storage, /cloudIds\.has\(localCapture\.id\)/);
   assert.match(panel, /Inspirações/);
-  assert.match(panel, /Adicionar às notas/);
+  assert.match(panel, /Inserir no roteiro/);
   assert.match(panel, /loadCaptureBlob/);
   assert.match(page, /script-inspiration-toggle/);
-  assert.match(page, /Inspiração adicionada às notas do roteiro/);
+  assert.match(page, /useCaptureInScript/);
+  assert.match(page, /selectionStart/);
+  assert.match(page, /setSelectionRange/);
+  assert.match(page, /Inspiração inserida no roteiro na posição do cursor/);
   assert.match(styles, /\.capture-shortcuts/);
   assert.match(styles, /\.capture-grid/);
   assert.match(styles, /\.script-inspiration-panel/);

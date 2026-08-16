@@ -2129,6 +2129,8 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [teleprompterOpen, setTeleprompterOpen] = useState(false);
   const [inspirationsOpen, setInspirationsOpen] = useState(false);
+  const scriptEditorRef = useRef<HTMLTextAreaElement>(null);
+  const scriptSelectionRef = useRef<{ contentId: string; start: number; end: number } | null>(null);
   const closeTeleprompter = useCallback(() => setTeleprompterOpen(false), []);
   const scriptText = useMemo(() => scriptTextFromItem(selected), [selected]);
   const currentStatusIndex = statusOrder.indexOf(selected.status);
@@ -2138,20 +2140,48 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   const teleprompterSections = splitScriptIntoTeleprompterBlocks(scriptText)
     .map((text, index) => ({ id: `script-block-${index + 1}`, text }));
 
-  function useCaptureInNotes(capture: CaptureItem) {
-    const reference = [
-      `Inspiração: ${capture.title} (${kindLabelForCapture(capture.kind)})`,
-      capture.text,
-      capture.url ? `Link: ${capture.url}` : "",
-      capture.fileName ? `Arquivo: ${capture.fileName}` : "",
+  function rememberScriptSelection(editor: HTMLTextAreaElement) {
+    scriptSelectionRef.current = {
+      contentId: selected.id,
+      start: editor.selectionStart,
+      end: editor.selectionEnd,
+    };
+  }
+
+  function useCaptureInScript(capture: CaptureItem) {
+    const captureText = capture.text.trim();
+    const captureUrl = capture.url.trim();
+    const inspiration = [
+      captureText || capture.title.trim(),
+      captureUrl && captureUrl !== captureText ? `Referência: ${captureUrl}` : "",
+      capture.fileName && !captureText ? `Arquivo: ${capture.fileName}` : "",
     ].filter(Boolean).join("\n");
-    const alreadyAdded = selected.notes.includes(`Inspiração: ${capture.title}`);
-    if (alreadyAdded) {
-      onNotify("Esta inspiração já está nas notas do roteiro.");
+    if (!inspiration) {
+      onNotify("Esta captura não tem texto para inserir no roteiro.");
       return;
     }
-    onUpdate("notes", [selected.notes.trim(), reference].filter(Boolean).join("\n\n"));
-    onNotify("Inspiração adicionada às notas do roteiro.");
+
+    const savedSelection = scriptSelectionRef.current?.contentId === selected.id
+      ? scriptSelectionRef.current
+      : null;
+    const start = savedSelection?.start ?? scriptText.length;
+    const end = savedSelection?.end ?? scriptText.length;
+    const before = scriptText.slice(0, start);
+    const after = scriptText.slice(end);
+    const prefix = before ? (before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n") : "";
+    const suffix = after ? (after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n") : "";
+    const nextScript = `${before}${prefix}${inspiration}${suffix}${after}`;
+    const nextCursor = before.length + prefix.length + inspiration.length;
+
+    onUpdate("script", nextScript);
+    scriptSelectionRef.current = { contentId: selected.id, start: nextCursor, end: nextCursor };
+    window.requestAnimationFrame(() => {
+      const editor = scriptEditorRef.current;
+      if (!editor) return;
+      editor.focus();
+      editor.setSelectionRange(nextCursor, nextCursor);
+    });
+    onNotify("Inspiração inserida no roteiro na posição do cursor.");
   }
 
   return (
@@ -2242,18 +2272,21 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
           <div className="script-single-card">
             <label htmlFor={`script-${selected.id}`}><strong>ROTEIRO</strong><small>Escreva livremente. Cada linha em branco vira um novo bloco no teleprompter.</small></label>
             <textarea
+              ref={scriptEditorRef}
               id={`script-${selected.id}`}
               className="script-single-editor"
               aria-label="Roteiro completo"
               rows={22}
               value={scriptText}
               onChange={(event) => onUpdate("script", event.target.value)}
+              onSelect={(event) => rememberScriptSelection(event.currentTarget)}
+              onBlur={(event) => rememberScriptSelection(event.currentTarget)}
               placeholder={'Escreva ou cole o roteiro completo aqui...\n\nDeixe uma linha em branco entre os blocos para facilitar a leitura no teleprompter.'}
             />
             <div className="script-single-footer"><span>{teleprompterSections.length} {teleprompterSections.length === 1 ? "bloco de leitura" : "blocos de leitura"}</span><span>As quebras serão preservadas no teleprompter.</span></div>
           </div>
         </div>
-        {inspirationsOpen && <ScriptInspirationPanel workspaceId={workspaceId} onClose={() => setInspirationsOpen(false)} onOpenInbox={onOpenInbox} onUseCapture={useCaptureInNotes} />}
+        {inspirationsOpen && <ScriptInspirationPanel workspaceId={workspaceId} onClose={() => setInspirationsOpen(false)} onOpenInbox={onOpenInbox} onUseCapture={useCaptureInScript} />}
         </div>
       </article>
       {teleprompterOpen && (

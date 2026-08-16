@@ -142,7 +142,7 @@ function InspirationPreview({ capture, onUse }: { capture: CaptureItem; onUse: (
       {capture.kind === "link" && <a href={capture.url} target="_blank" rel="noreferrer"><Link2 size={14} /><span>Abrir referência</span><ArrowUpRight size={14} /></a>}
       {capture.kind === "pdf" && objectUrl && <a href={objectUrl} target="_blank" rel="noreferrer"><Paperclip size={14} /><span>Ler {capture.fileName || "PDF"}</span><ArrowUpRight size={14} /></a>}
       {loadingFile && <small className="inspiration-file-loading"><LoaderCircle className="spin" size={13} /> Preparando arquivo...</small>}
-      <button className="button primary small" onClick={onUse}><Plus size={15} /> Adicionar às notas</button>
+      <button className="button primary small" onClick={onUse}><Plus size={15} /> Inserir no roteiro</button>
     </article>
   );
 }
