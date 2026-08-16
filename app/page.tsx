@@ -2149,10 +2149,14 @@ function ScriptsView({ contents, selected, instagramAccounts, workspaceId, onSel
   }
 
   function useCaptureInScript(capture: CaptureItem) {
+    const captureTitle = capture.title.trim();
     const captureText = capture.text.trim();
     const captureUrl = capture.url.trim();
     const inspiration = [
-      captureText || capture.title.trim(),
+      captureTitle,
+      captureText && captureText !== captureTitle
+        ? (/^https?:\/\//i.test(captureText) ? `Referência: ${captureText}` : captureText)
+        : "",
       captureUrl && captureUrl !== captureText ? `Referência: ${captureUrl}` : "",
       capture.fileName && !captureText ? `Arquivo: ${capture.fileName}` : "",
     ].filter(Boolean).join("\n");
