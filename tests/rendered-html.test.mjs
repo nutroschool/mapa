@@ -276,14 +276,16 @@ test("separates content by Instagram account and synchronizes assignments with R
   assert.match(migration, /auth\.uid\(\).*user_id/is);
 });
 
-test("implements a synchronized multimedia quick-capture inbox inside the script editor", async () => {
-  const [page, component, panel, storage, styles, migration] = await Promise.all([
+test("implements a synchronized multimedia quick-capture inbox with inspirations owned by each script", async () => {
+  const [page, component, panel, storage, styles, migration, inspirationMigration, indexMigration] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/CaptureInbox.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/ScriptInspirationPanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/capture-inbox.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260814092121_add_capture_inbox_and_instagram_accounts.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260816234837_link_captures_to_content_items.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260818090418_cover_capture_content_owner_fk.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /Inbox de inspirações/);
@@ -305,22 +307,40 @@ test("implements a synchronized multimedia quick-capture inbox inside the script
   assert.match(storage, /listLocalCaptures/);
   assert.match(storage, /saveCloudCapture\(localCapture, true\)/);
   assert.match(storage, /cloudIds\.has\(localCapture\.id\)/);
+  assert.match(storage, /content_item_id/);
+  assert.match(storage, /contentItemId/);
   assert.match(panel, /Inspirações/);
-  assert.match(panel, /Inserir no roteiro/);
+  assert.match(panel, /Adicionar neste roteiro/);
+  assert.match(panel, /Salvar neste roteiro/);
+  assert.match(panel, /Fica salvo somente neste vídeo/);
+  assert.match(panel, /Enviar arquivo de referência/);
+  assert.match(panel, /Subir print, PDF ou áudio/);
+  assert.match(panel, /captureKindForFile/);
+  assert.match(panel, /20 \* 1024 \* 1024/);
+  assert.match(panel, /blob: draftFile/);
+  assert.match(panel, /saveCapture/);
+  assert.match(panel, /listCaptures\(workspaceId, contentItemId\)/);
+  assert.doesNotMatch(panel, /Inserir no roteiro/);
+  assert.doesNotMatch(panel, /Abrir Capturas/);
   assert.match(panel, /loadCaptureBlob/);
   assert.match(page, /script-inspiration-toggle/);
-  assert.match(page, /useCaptureInScript/);
-  assert.match(page, /selectionStart/);
-  assert.match(page, /setSelectionRange/);
-  assert.match(page, /Inspiração inserida no roteiro na posição do cursor/);
+  assert.match(page, /contentItemId=\{selected\.id\}/);
+  assert.doesNotMatch(page, /useCaptureInScript/);
   assert.match(styles, /\.capture-shortcuts/);
   assert.match(styles, /\.capture-grid/);
   assert.match(styles, /\.script-inspiration-panel/);
+  assert.match(styles, /\.script-inspiration-composer/);
   assert.match(migration, /create table if not exists public\.capture_items/);
   assert.match(migration, /insert into storage\.buckets/);
   assert.match(migration, /bucket_id = 'capture-inbox'/);
   assert.match(migration, /storage\.foldername\(name\)/);
   assert.match(migration, /enable row level security/gi);
+  assert.match(inspirationMigration, /add column if not exists content_item_id uuid/);
+  assert.match(inspirationMigration, /foreign key \(content_item_id, user_id\)/);
+  assert.match(inspirationMigration, /references public\.content_items \(id, user_id\)/);
+  assert.match(inspirationMigration, /on delete cascade/);
+  assert.match(inspirationMigration, /capture_items_user_content_created_idx/);
+  assert.match(indexMigration, /\(content_item_id, user_id, created_at desc\)/);
 });
 
 test("lets the authenticated user change the password from settings", async () => {

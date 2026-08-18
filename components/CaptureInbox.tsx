@@ -270,6 +270,7 @@ export default function CaptureInbox({ workspaceId, search, openComposerToken, o
     try {
       const saved = await saveCapture({
         workspaceId,
+        contentItemId: null,
         kind,
         title: title.trim() || (kind === "text" ? text.trim().slice(0, 72) : `${kindLabels[kind]} sem título`),
         text: text.trim(),

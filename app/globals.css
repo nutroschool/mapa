@@ -1116,6 +1116,23 @@ body { font-size: 16px; }
 .inspiration-panel-head > span > span { min-width: 0; display: flex; flex-direction: column; }
 .inspiration-panel-head small { color: #929982; font: 800 8px var(--font-display); letter-spacing: .1em; }
 .inspiration-panel-head strong { color: var(--ink); font: 800 16px var(--font-display); }
+.script-inspiration-composer { margin: 8px 0 11px; padding: 11px; border: 1px solid #dbe5aa; border-radius: 12px; display: grid; gap: 8px; background: #f7fadf; }
+.script-inspiration-composer > div { display: flex; align-items: center; gap: 8px; }
+.script-inspiration-composer > div > span:first-child { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: #61721b; background: #e6f19e; }
+.script-inspiration-composer > div > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+.script-inspiration-composer strong { color: var(--ink); font-size: 11px; }
+.script-inspiration-composer small { margin-top: 2px; color: #87906b; font-size: 8px; }
+.script-inspiration-composer input, .script-inspiration-composer textarea { width: 100%; padding: 9px 10px; border: 1px solid #daddd2; border-radius: 9px; outline: 0; color: var(--ink); background: #fff; font: inherit; font-size: 10px; }
+.script-inspiration-composer textarea { min-height: 68px; resize: vertical; line-height: 1.45; }
+.script-inspiration-composer input:focus, .script-inspiration-composer textarea:focus { border-color: #aebf58; box-shadow: 0 0 0 3px rgba(180,204,74,.12); }
+.script-inspiration-composer > .button { width: 100%; }
+.script-inspiration-composer > .inspiration-file-button { border-style: dashed; color: #61721b; border-color: #c9d485; background: rgba(255,255,255,.72); }
+.inspiration-file-selected { min-height: 48px; padding: 7px 8px; border: 1px solid #cbd98a; border-radius: 9px; display: grid !important; grid-template-columns: 28px minmax(0,1fr) 28px; align-items: center; gap: 7px !important; color: #61721b; background: #fff; }
+.inspiration-file-selected > span:first-child { width: 28px !important; height: 28px !important; }
+.inspiration-file-selected > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; }
+.inspiration-file-selected strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.inspiration-file-selected small { color: #87906b; font-size: 8px; }
+.inspiration-file-selected > button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; display: grid; place-items: center; color: #8b5147; background: #fff1ed; cursor: pointer; }
 .inspiration-search { min-height: 39px; margin: 8px 0 11px; padding: 0 10px; border: 1px solid #dfe1d8; border-radius: 10px; display: flex; align-items: center; gap: 7px; color: #9297a1; background: #fff; }
 .inspiration-search:focus-within { border-color: #b6c763; box-shadow: 0 0 0 3px rgba(180,204,74,.11); }
 .inspiration-search input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 11px; }
@@ -1134,14 +1151,18 @@ body { font-size: 16px; }
 .inspiration-preview > a { min-height: 38px; margin: 4px 0 10px; padding: 0 9px; border-radius: 8px; display: flex; align-items: center; gap: 7px; color: #61721b; background: #f3f8d9; font-size: 10px; font-weight: 750; text-decoration: none; }
 .inspiration-preview > a span { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
 .inspiration-preview > .button { width: 100%; }
+.inspiration-feedback { margin: -3px 0 9px; padding: 8px 9px; border-radius: 8px; color: #8b5147; background: #fff1ed; font-size: 9px; line-height: 1.4; }
+.inspiration-saved-row { min-height: 33px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eceee4; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inspiration-saved-row > span { display: inline-flex; align-items: center; gap: 5px; color: #687722; font-size: 9px; font-weight: 800; }
+.inspiration-saved-row > button { width: 29px; height: 29px; padding: 0; border: 1px solid #eed8d2; border-radius: 8px; display: grid; place-items: center; color: #a95448; background: #fff8f6; cursor: pointer; }
+.inspiration-saved-row > button:hover { color: #fff; border-color: #b95d50; background: #b95d50; }
 .inspiration-image { position: relative; width: 100%; height: 148px; overflow: hidden; margin-bottom: 9px; padding: 0; border: 0; border-radius: 9px; background: #edf0e3; cursor: zoom-in; }
 .inspiration-image img { object-fit: cover; }
 .inspiration-file-loading { margin: 5px 0 10px; display: flex; align-items: center; gap: 5px; color: #9196a0; font-size: 9px; }
-.inspiration-panel-empty { min-height: 205px; padding: 24px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8e949e; text-align: center; }
+.inspiration-panel-empty { min-height: 150px; padding: 20px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8e949e; text-align: center; }
 .inspiration-panel-empty > span:first-child { width: 44px; height: 44px; margin-bottom: 8px; border-radius: 12px; display: grid; place-items: center; color: #718221; background: #edf5c6; }
 .inspiration-panel-empty strong { color: var(--ink); font: 800 14px var(--font-display); }
 .inspiration-panel-empty p { margin: 5px 0 0; font-size: 10px; line-height: 1.5; }
-.inspiration-open-inbox { width: 100%; margin-top: 12px; }
 
 .password-settings-fields { display: grid; gap: 12px; }
 .password-settings-fields label { display: grid; gap: 6px; color: #5f6675; font-size: 11px; font-weight: 750; }

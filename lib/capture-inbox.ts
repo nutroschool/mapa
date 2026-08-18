@@ -5,6 +5,7 @@ export type CaptureKind = "audio" | "link" | "image" | "text" | "pdf";
 export type CaptureItem = {
   id: string;
   workspaceId: string;
+  contentItemId: string | null;
   kind: CaptureKind;
   title: string;
   text: string;
@@ -27,6 +28,7 @@ const captureBucket = "capture-inbox";
 type CaptureRow = {
   id: string;
   user_id: string;
+  content_item_id: string | null;
   kind: CaptureKind;
   title: string;
   body_text: string;
@@ -47,6 +49,7 @@ function rowToCapture(row: CaptureRow): CaptureItem {
   return {
     id: row.id,
     workspaceId: row.user_id,
+    contentItemId: row.content_item_id,
     kind: row.kind,
     title: row.title,
     text: row.body_text,
@@ -112,7 +115,11 @@ async function listLocalCaptures(workspaceId: string) {
     const request = index.getAll(IDBKeyRange.only(workspaceId));
     request.onsuccess = () => {
       const captures = (request.result as CaptureItem[])
-        .map((capture) => ({ ...capture, storagePath: capture.storagePath || null }))
+        .map((capture) => ({
+          ...capture,
+          contentItemId: capture.contentItemId || null,
+          storagePath: capture.storagePath || null,
+        }))
         .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
       resolve(captures);
     };
@@ -142,6 +149,7 @@ async function saveCloudCapture(capture: CaptureItem, migrating = false) {
   const values = {
     id: capture.id,
     user_id: capture.workspaceId,
+    content_item_id: capture.contentItemId,
     kind: capture.kind,
     title: capture.title,
     body_text: capture.text,
@@ -157,7 +165,7 @@ async function saveCloudCapture(capture: CaptureItem, migrating = false) {
     ? supabase.from("capture_items").upsert(values, { onConflict: "id" })
     : supabase.from("capture_items").insert(values);
   const { data, error } = await query
-    .select("id,user_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
+    .select("id,user_id,content_item_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
     .single();
 
   if (error || !data) {
@@ -167,11 +175,11 @@ async function saveCloudCapture(capture: CaptureItem, migrating = false) {
   return rowToCapture(data as CaptureRow);
 }
 
-export async function listCaptures(workspaceId: string) {
+export async function listCaptures(workspaceId: string, contentItemId?: string) {
   if (usesCloud(workspaceId) && supabase) {
     const { data, error } = await supabase
       .from("capture_items")
-      .select("id,user_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
+      .select("id,user_id,content_item_id,kind,title,body_text,source_url,tags,file_name,mime_type,file_size,storage_path,created_at")
       .eq("user_id", workspaceId)
       .order("created_at", { ascending: false });
     if (error) throw new Error("Não foi possível carregar suas inspirações sincronizadas.");
@@ -195,10 +203,16 @@ export async function listCaptures(workspaceId: string) {
       }
     }
 
-    return [...cloudCaptures, ...migratedCaptures, ...pendingLocalCaptures]
+    const captures = [...cloudCaptures, ...migratedCaptures, ...pendingLocalCaptures]
       .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+    return contentItemId
+      ? captures.filter((capture) => capture.contentItemId === contentItemId)
+      : captures;
   }
-  return listLocalCaptures(workspaceId);
+  const captures = await listLocalCaptures(workspaceId);
+  return contentItemId
+    ? captures.filter((capture) => capture.contentItemId === contentItemId)
+    : captures;
 }
 
 export async function saveCapture(input: NewCaptureItem) {
